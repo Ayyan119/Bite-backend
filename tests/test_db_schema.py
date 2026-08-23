@@ -1,7 +1,11 @@
 import os
+from uuid import uuid4
 import pytest
 from pathlib import Path
 import psycopg
+
+from app.schemas import ProfileCreate, ProfileResponse, MealLogCreate, MealItemBase
+from app.core.config import settings
 
 MIGRATION_FILE = Path(__file__).parent.parent / "migrations" / "001_initial_schema.sql"
 
@@ -37,12 +41,51 @@ def test_migration_sql_structure():
     assert "auth.uid()" in sql
 
 
+def test_pydantic_schema_validation():
+    """Verify Pydantic v2 schemas for Profiles and Meal Logs."""
+    user_id = uuid4()
+    profile_in = ProfileCreate(
+        id=user_id,
+        email="testuser@example.com",
+        display_name="Test User",
+        target_calories=2000.0,
+        target_protein_g=150.0,
+    )
+    assert profile_in.id == user_id
+    assert profile_in.email == "testuser@example.com"
+
+    meal_item = MealItemBase(
+        food_name="Grilled Chicken Breast",
+        fdc_id=171077,
+        portion_amount=1.5,
+        portion_unit="serving",
+        gram_weight=150.0,
+        calories=247.5,
+        protein_g=46.5,
+        carbs_g=0.0,
+        fat_g=5.4,
+        raw_usda_nutrients={"Vitamin D": 0.0, "Calcium, Ca": 22.5},
+    )
+    assert meal_item.calories == 247.5
+    assert meal_item.raw_usda_nutrients["Calcium, Ca"] == 22.5
+
+    meal_log = MealLogCreate(
+        user_id=user_id,
+        meal_type="lunch",
+        total_calories=247.5,
+        total_protein_g=46.5,
+        aggregated_nutrients={"Calcium, Ca": 22.5},
+        items=[meal_item],
+    )
+    assert meal_log.meal_type == "lunch"
+    assert len(meal_log.items) == 1
+
+
 @pytest.mark.asyncio
 async def test_live_postgres_migration():
     """Run migration against live Postgres database if connection is available."""
-    db_url = os.getenv("SUPABASE_POSTGRES_DIRECT_URL")
+    db_url = settings.SUPABASE_POSTGRES_DIRECT_URL
     if not db_url or "localhost" in db_url:
-        # Check if local postgres port is open
         try:
             aconn = await psycopg.AsyncConnection.connect(db_url, connect_timeout=1)
             await aconn.close()
@@ -51,7 +94,6 @@ async def test_live_postgres_migration():
 
     async with await psycopg.AsyncConnection.connect(db_url) as aconn:
         async with aconn.cursor() as acur:
-            # Check table existence in public schema
             await acur.execute("""
                 SELECT table_name 
                 FROM information_schema.tables 
