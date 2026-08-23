@@ -18,13 +18,13 @@
 ---
 
 ## Phase 1: Database Setup (Supabase / PostgreSQL)
-- [ ] **Task 1.1:** Connect via MCP Postgres server to verify database connectivity.
-- [ ] **Task 1.2:** Execute DDL migration for:
+- [x] **Task 1.1:** Connect via MCP Postgres server to verify database connectivity.
+- [x] **Task 1.2:** Execute DDL migration for:
   - `public.profiles` (User BMR, TDEE, macro targets).
   - `public.meal_logs` (Timestamps, meal types, macro summaries, image URLs, `aggregated_nutrients jsonb`).
   - `public.meal_items` (Food names, `fdc_id`, servings, macros, `raw_usda_nutrients jsonb`).
-- [ ] **Task 1.3:** Create GIN indexes on `jsonb` columns for fast micronutrient querying.
-- [ ] **Task 1.4:** Setup Row Level Security (RLS) policies linking `user_id` to Supabase `auth.users`.
+- [x] **Task 1.3:** Create GIN indexes on `jsonb` columns for fast micronutrient querying.
+- [x] **Task 1.4:** Setup Row Level Security (RLS) policies linking `user_id` to Supabase `auth.users`.
 
 ---
 
