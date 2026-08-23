@@ -6,10 +6,10 @@
 
 ## Phase 0: Workspace & Repository Setup
 - [x] **Task 0.1:** Initialize local Python virtual environment (`python -m venv .venv` and activate).
-- [ ] **Task 0.2:** Create `.gitignore` (Python, Flutter, `.env`, credentials).
-- [ ] **Task 0.3:** Initialize local git repository (`git init`) and commit baseline files.
-- [ ] **Task 0.4:** Create remote GitHub repository named `bite-backend` (or `bite-app`) and push initial commit.
-- [ ] **Task 0.5:** Setup `.env` file with placeholders for:
+- [x] **Task 0.2:** Create `.gitignore` (Python, Flutter, `.env`, credentials).
+- [x] **Task 0.3:** Initialize local git repository (`git init`) and commit baseline files.
+- [x] **Task 0.4:** Create remote GitHub repository named `bite-backend` (or `bite-app`) and push initial commit.
+- [x] **Task 0.5:** Setup `.env` file with placeholders for:
   - `SUPABASE_POSTGRES_DIRECT_URL`
   - `OPENAI_API_KEY` or `GEMINI_API_KEY`
   - `USDA_API_KEY`
