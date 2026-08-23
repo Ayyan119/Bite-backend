@@ -1,0 +1,32 @@
+{
+  "protect-db-env-files": {
+    "enabled": true,
+    "PreToolUse": [
+      {
+        "matcher": "run_command|write_to_file|replace_file_content",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "./scripts/protect_files.py",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  },
+  "black-formatter": {
+    "enabled": true,
+    "PostToolUse": [
+      {
+        "matcher": "write_to_file|replace_file_content",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "./scripts/format_black.py",
+            "timeout": 15
+          }
+        ]
+      }
+    ]
+  }
+}
