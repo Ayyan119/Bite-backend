@@ -1,0 +1,21 @@
+---
+config:
+  flowchart:
+    curve: linear
+---
+graph TD;
+	__start__([<p>__start__</p>]):::first
+	vision_extraction(vision_extraction)
+	usda_resolver(usda_resolver)
+	fallback(fallback)
+	reconciliation(reconciliation)
+	__end__([<p>__end__</p>]):::last
+	__start__ --> vision_extraction;
+	fallback --> reconciliation;
+	usda_resolver -.-> fallback;
+	usda_resolver -.-> reconciliation;
+	vision_extraction --> usda_resolver;
+	reconciliation --> __end__;
+	classDef default fill:#f2f0ff,line-height:1.2
+	classDef first fill-opacity:0
+	classDef last fill:#bfb6fc

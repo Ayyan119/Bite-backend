@@ -1,17 +1,26 @@
-from app.schemas.profile import (
-    ProfileBase,
-    ProfileCreate,
-    ProfileResponse,
-    ProfileUpdate,
+from app.schemas.ingestion import (
+    ExtractedFoodItem,
+    FallbackMacroEstimate,
+    IngestionState,
+    ReconciledItem,
+    USDANutrientProfile,
+    VisionAnalysisResult,
+    VisionItem,
 )
 from app.schemas.meal import (
-    MealType,
     MealItemBase,
     MealItemCreate,
     MealItemResponse,
     MealLogBase,
     MealLogCreate,
     MealLogResponse,
+    MealType,
+)
+from app.schemas.profile import (
+    ProfileBase,
+    ProfileCreate,
+    ProfileResponse,
+    ProfileUpdate,
 )
 
 __all__ = [
@@ -26,4 +35,11 @@ __all__ = [
     "MealLogBase",
     "MealLogCreate",
     "MealLogResponse",
+    "VisionItem",
+    "USDANutrientProfile",
+    "ReconciledItem",
+    "IngestionState",
+    "ExtractedFoodItem",
+    "VisionAnalysisResult",
+    "FallbackMacroEstimate",
 ]

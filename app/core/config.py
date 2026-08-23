@@ -1,3 +1,9 @@
+import base64
+import os
+import dotenv
+
+dotenv.load_dotenv()
+
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -18,11 +24,23 @@ class Settings(BaseSettings):
         description="Direct PostgreSQL connection string",
     )
 
-    # API Keys
+    # API Keys & LLM Config
     GEMINI_API_KEY: str | None = Field(default=None, description="Gemini API Key")
     OPENAI_API_KEY: str | None = Field(default=None, description="OpenAI API Key")
-    USDA_API_KEY: str | None = Field(
-        default=None, description="USDA FoodData Central API Key"
+    USDA_API_KEY: str = Field(
+        default="DEMO_KEY", description="USDA FoodData Central API Key"
+    )
+    USDA_API_BASE_URL: str = Field(
+        default="https://api.nal.usda.gov/fdc/v1",
+        description="USDA FoodData Central API Base URL",
+    )
+    VISION_LLM_MODEL: str = Field(
+        default="gpt-4o",
+        description="Vision LLM model identifier for complex visual analysis",
+    )
+    FAST_LLM_MODEL: str = Field(
+        default="gpt-4o-mini",
+        description="Fast LLM model identifier for fallback macro estimation and fast tasks",
     )
     SUPABASE_JWT_SECRET: str | None = Field(
         default=None, description="Supabase JWT Verification Secret"
@@ -30,3 +48,31 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+MAX_IMAGE_SIZE_BYTES = 10 * 1024 * 1024  # 10 MB limit
+
+
+def validate_image_input(
+    image_bytes: bytes | None = None, image_url: str | None = None
+) -> str:
+    """Validate image payload (bytes or URL) and enforce maximum 10MB size limit.
+
+    Returns the formatted base64 data URI string or verified image URL.
+    Raises ValueError if neither input is valid or if size exceeds 10MB.
+    """
+    if not image_bytes and not image_url:
+        raise ValueError("Either image_bytes or image_url must be provided.")
+
+    if image_bytes:
+        if len(image_bytes) > MAX_IMAGE_SIZE_BYTES:
+            raise ValueError("Image payload exceeds maximum allowed size of 10MB.")
+        encoded = base64.b64encode(image_bytes).decode("utf-8")
+        return f"data:image/jpeg;base64,{encoded}"
+
+    if image_url:
+        clean_url = image_url.strip()
+        if not (clean_url.startswith("http://") or clean_url.startswith("https://")):
+            raise ValueError("Invalid image URL. Must start with http:// or https://")
+        return clean_url
+
+    raise ValueError("Invalid image input provided.")
