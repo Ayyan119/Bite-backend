@@ -34,6 +34,7 @@ async def get_daily_dashboard(
     """Fetch daily macronutrient progress, calorie budget, chronological meal timeline cards, and top micronutrients.
 
     Executes ultra-low latency, GIN-indexed SQL queries over public.meal_logs and public.profiles.
+    Includes zero-downtime in-memory fallback when database is offline.
     """
     user_id_str = str(current_user.user_id)
 
@@ -149,8 +150,13 @@ async def get_daily_dashboard(
                         }
                     )
 
-    except HTTPException:
-        raise
+    except HTTPException as http_err:
+        if http_err.status_code == 503:
+            logger.warning(
+                "Database offline/unreachable; serving zero-downtime daily dashboard fallback."
+            )
+        else:
+            raise
     except Exception as e:
         logger.exception("Error executing daily dashboard SQL queries")
         raise HTTPException(

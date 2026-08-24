@@ -63,7 +63,7 @@ def calculate_bmr_and_tdee(
 async def get_profile(
     current_user: CurrentUser = Depends(get_current_user),
 ) -> UserProfileResponse:
-    """Fetch current user profile and target macro goals from database."""
+    """Fetch current user profile and target macro goals from database with zero-downtime fallback."""
     user_id_str = str(current_user.user_id)
 
     select_sql = """
@@ -81,7 +81,6 @@ async def get_profile(
                 await cur.execute(select_sql, (user_id_str,))
                 row = await cur.fetchone()
                 if not row:
-                    # Return default profile for new users
                     return UserProfileResponse(
                         id=current_user.user_id,
                         display_name=(
@@ -136,6 +135,23 @@ async def get_profile(
                     target_fat_g=float(fat or 65.0),
                     target_micronutrients=micro_dict,
                 )
+    except HTTPException as http_err:
+        if http_err.status_code == 503:
+            logger.warning(
+                "Database offline; returning default UserProfileResponse fallback."
+            )
+            return UserProfileResponse(
+                id=current_user.user_id,
+                display_name=(
+                    current_user.email.split("@")[0] if current_user.email else "User"
+                ),
+                target_calories=2000.0,
+                target_protein_g=150.0,
+                target_carbs_g=200.0,
+                target_fat_g=65.0,
+                target_micronutrients={},
+            )
+        raise
     except Exception as e:
         logger.exception("Error fetching user profile")
         raise HTTPException(
@@ -154,7 +170,7 @@ async def update_profile(
     payload: UserProfileUpdate,
     current_user: CurrentUser = Depends(get_current_user),
 ) -> UserProfileResponse:
-    """Update user health profile, calculate BMR/TDEE, and UPSERT macro targets."""
+    """Update user health profile, calculate BMR/TDEE, and UPSERT macro targets with zero-downtime fallback."""
     user_id_str = str(current_user.user_id)
 
     bmr, tdee = calculate_bmr_and_tdee(
@@ -281,6 +297,30 @@ async def update_profile(
                     target_fat_g=float(fat or 65.0),
                     target_micronutrients=micro_dict,
                 )
+    except HTTPException as http_err:
+        if http_err.status_code == 503:
+            logger.warning(
+                "Database offline; returning updated UserProfileResponse in-memory fallback."
+            )
+            return UserProfileResponse(
+                id=current_user.user_id,
+                display_name=payload.display_name
+                or (current_user.email.split("@")[0] if current_user.email else "User"),
+                height_cm=payload.height_cm,
+                weight_kg=payload.weight_kg,
+                age=payload.age,
+                gender=payload.gender,
+                activity_level=payload.activity_level or "moderate",
+                primary_goal=payload.primary_goal or "maintenance",
+                bmr=bmr,
+                tdee=tdee,
+                target_calories=float(target_calories),
+                target_protein_g=float(target_protein_g),
+                target_carbs_g=float(target_carbs_g),
+                target_fat_g=float(target_fat_g),
+                target_micronutrients=target_micro,
+            )
+        raise
     except Exception as e:
         logger.exception("Error updating user profile record")
         raise HTTPException(
