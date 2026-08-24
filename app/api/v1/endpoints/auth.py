@@ -55,6 +55,25 @@ async def generate_dev_token(
     secret = get_jwt_secret()
     signed_jwt = jwt.encode(jwt_payload, secret, algorithm="HS256")
 
+    email_str = payload.email or "developer@example.com"
+    disp_name = email_str.split("@")[0] if "@" in email_str else "User"
+
+    try:
+        from app.db.connection import get_db_connection
+
+        async with get_db_connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    """
+                    INSERT INTO public.profiles (id, email, display_name)
+                    VALUES (%s, %s, %s)
+                    ON CONFLICT (id) DO NOTHING;
+                    """,
+                    (str(target_user_id), email_str, disp_name),
+                )
+    except Exception as err:
+        logger.warning(f"Failed to auto-create profile row for dev token: {err}")
+
     return DevTokenResponse(
         access_token=signed_jwt,
         token_type="bearer",

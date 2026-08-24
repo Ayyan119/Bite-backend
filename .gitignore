@@ -75,7 +75,7 @@ venv.bak/
 .pydevproject
 .settings/
 
-# OS Specific
+# OS Specific & Databases
 .DS_Store
 .DS_Store?
 ._*
@@ -83,6 +83,7 @@ venv.bak/
 .Trashes
 ehthumbs.db
 Thumbs.db
+*.db
 
 # Flutter / Dart (for multi-app or mono-repo components)
 .dart_tool/

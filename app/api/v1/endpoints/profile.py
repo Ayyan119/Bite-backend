@@ -72,7 +72,7 @@ async def get_profile(
            target_calories, target_protein_g, target_carbs_g, target_fat_g,
            target_micronutrients
     FROM public.profiles
-    WHERE id = $1;
+    WHERE id = %s;
     """
 
     try:
@@ -207,7 +207,7 @@ async def update_profile(
         target_calories, target_protein_g, target_carbs_g, target_fat_g,
         target_micronutrients, updated_at
     )
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15::jsonb, NOW())
+    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, NOW())
     ON CONFLICT (id) DO UPDATE SET
         display_name = COALESCE(EXCLUDED.display_name, public.profiles.display_name),
         height_cm = COALESCE(EXCLUDED.height_cm, public.profiles.height_cm),

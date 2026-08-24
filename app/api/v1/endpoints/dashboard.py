@@ -68,7 +68,7 @@ async def get_daily_dashboard(
     profile_sql = """
     SELECT target_calories, target_protein_g, target_carbs_g, target_fat_g
     FROM public.profiles
-    WHERE id = $1;
+    WHERE id = %s;
     """
 
     meals_sql = """
@@ -76,7 +76,7 @@ async def get_daily_dashboard(
            total_calories, total_protein_g, total_carbs_g, total_fat_g,
            aggregated_nutrients, logged_at
     FROM public.meal_logs
-    WHERE user_id = $1 AND logged_at::date = $2::date
+    WHERE user_id = %s AND logged_at::date = %s::date
     ORDER BY logged_at ASC;
     """
 

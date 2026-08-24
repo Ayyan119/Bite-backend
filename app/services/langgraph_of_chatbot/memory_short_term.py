@@ -21,20 +21,47 @@ def get_trimmed_messages(
 ) -> List[BaseMessage]:
     """
     Slices and retains the latest `max_messages` from conversation history.
-    Preserves any leading SystemMessage if present.
+    Preserves leading SystemMessage and removes orphan ToolMessages that lack preceding tool_calls.
     """
     if not messages:
         return []
+
+    from langchain_core.messages import ToolMessage, AIMessage
 
     system_msgs = [m for m in messages if isinstance(m, SystemMessage)]
     non_system_msgs = [m for m in messages if not isinstance(m, SystemMessage)]
 
     trimmed_non_system = (
-        non_system_msgs[-max_messages:]
+        list(non_system_msgs[-max_messages:])
         if len(non_system_msgs) > max_messages
-        else non_system_msgs
+        else list(non_system_msgs)
     )
-    return system_msgs + trimmed_non_system
+
+    # Filter out orphan ToolMessages (ToolMessages that don't have matching AIMessage tool_calls in trimmed window)
+    ai_tool_call_ids = set()
+    sanitized_msgs = []
+
+    for msg in trimmed_non_system:
+        if isinstance(msg, AIMessage) and hasattr(msg, "tool_calls") and msg.tool_calls:
+            for tc in msg.tool_calls:
+                if isinstance(tc, dict) and tc.get("id"):
+                    ai_tool_call_ids.add(tc["id"])
+            sanitized_msgs.append(msg)
+        elif isinstance(msg, ToolMessage):
+            tool_id = getattr(msg, "tool_call_id", None)
+            if tool_id and tool_id in ai_tool_call_ids:
+                sanitized_msgs.append(msg)
+            else:
+                logger.info(
+                    f"Filtered out orphan ToolMessage to prevent OpenAI 400 error: {tool_id}"
+                )
+        else:
+            sanitized_msgs.append(msg)
+
+    while sanitized_msgs and isinstance(sanitized_msgs[0], ToolMessage):
+        sanitized_msgs.pop(0)
+
+    return system_msgs + sanitized_msgs
 
 
 def count_user_messages(messages: Sequence[BaseMessage]) -> int:

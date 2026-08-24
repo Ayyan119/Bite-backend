@@ -25,14 +25,21 @@ $$ LANGUAGE plpgsql;
 -- -----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS public.profiles (
     id UUID PRIMARY KEY,
-    email TEXT UNIQUE NOT NULL,
+    email TEXT NOT NULL,
     display_name TEXT,
+    height_cm NUMERIC(5,2),
+    weight_kg NUMERIC(5,2),
+    age INTEGER,
+    gender TEXT,
+    activity_level TEXT DEFAULT 'moderate',
+    primary_goal TEXT DEFAULT 'maintenance',
     bmr NUMERIC(7,2) CHECK (bmr > 0),
     tdee NUMERIC(7,2) CHECK (tdee > 0),
     target_calories NUMERIC(7,2) CHECK (target_calories > 0),
     target_protein_g NUMERIC(6,2) CHECK (target_protein_g >= 0),
     target_carbs_g NUMERIC(6,2) CHECK (target_carbs_g >= 0),
     target_fat_g NUMERIC(6,2) CHECK (target_fat_g >= 0),
+    target_micronutrients JSONB DEFAULT '{}'::jsonb,
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
@@ -84,6 +91,7 @@ CREATE TABLE IF NOT EXISTS public.meal_items (
     protein_g NUMERIC(6,2) DEFAULT 0 CHECK (protein_g >= 0),
     carbs_g NUMERIC(6,2) DEFAULT 0 CHECK (carbs_g >= 0),
     fat_g NUMERIC(6,2) DEFAULT 0 CHECK (fat_g >= 0),
+    is_fallback BOOLEAN DEFAULT FALSE,
     raw_usda_nutrients JSONB NOT NULL DEFAULT '{}'::jsonb,
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
@@ -167,6 +175,43 @@ CREATE POLICY "Users can update own meal items"
     ON public.meal_items FOR UPDATE 
     USING (auth.uid() = user_id);
 
-CREATE POLICY "Users can delete own meal items" 
-    ON public.meal_items FOR DELETE 
-    USING (auth.uid() = user_id);
+-- -----------------------------------------------------------------------------
+-- 6. LangGraph Checkpoint Tables for State Machine Memory
+-- -----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS checkpoints (
+    thread_id TEXT NOT NULL,
+    checkpoint_ns TEXT NOT NULL DEFAULT '',
+    checkpoint_id TEXT NOT NULL,
+    parent_checkpoint_id TEXT,
+    type TEXT,
+    checkpoint JSONB NOT NULL,
+    metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+    PRIMARY KEY (thread_id, checkpoint_ns, checkpoint_id)
+);
+
+CREATE TABLE IF NOT EXISTS checkpoint_blobs (
+    thread_id TEXT NOT NULL,
+    checkpoint_ns TEXT NOT NULL DEFAULT '',
+    channel TEXT NOT NULL,
+    version TEXT NOT NULL,
+    type TEXT NOT NULL,
+    blob BYTEA,
+    PRIMARY KEY (thread_id, checkpoint_ns, channel, version)
+);
+
+CREATE TABLE IF NOT EXISTS checkpoint_writes (
+    thread_id TEXT NOT NULL,
+    checkpoint_ns TEXT NOT NULL DEFAULT '',
+    checkpoint_id TEXT NOT NULL,
+    task_id TEXT NOT NULL,
+    task_path TEXT NOT NULL DEFAULT '',
+    idx INTEGER NOT NULL,
+    channel TEXT NOT NULL,
+    type TEXT,
+    blob BYTEA,
+    PRIMARY KEY (thread_id, checkpoint_ns, checkpoint_id, task_id, idx)
+);
+
+CREATE INDEX IF NOT EXISTS idx_checkpoints_thread_id ON checkpoints (thread_id, checkpoint_ns);
+CREATE INDEX IF NOT EXISTS idx_checkpoint_writes_thread_id ON checkpoint_writes (thread_id, checkpoint_ns, checkpoint_id);
+

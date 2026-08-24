@@ -2,49 +2,30 @@ import asyncio
 import logging
 from typing import Any, Coroutine, Tuple
 from langgraph.checkpoint.memory import MemorySaver
-from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
-from app.db.connection import init_db_pool
 
 logger = logging.getLogger(__name__)
 
-_checkpointer_instance: Any = None
+# Singleton memory saver instance for zero-latency, collision-free thread state
 _memory_saver_instance = MemorySaver()
+_checkpointer_instance: Any = None
 
 
 async def get_checkpointer() -> Any:
     """Get or initialize the global checkpointer instance.
 
-    Uses AsyncPostgresSaver when PostgreSQL is available; falls back to MemorySaver
-    if database is offline or unreachable (<1s probe) to guarantee zero latency.
+    Uses MemorySaver to guarantee zero latency and prevent prepared statement
+    collisions on Supabase transaction poolers.
     """
     global _checkpointer_instance
     if _checkpointer_instance is None:
-        try:
-            db_pool = await init_db_pool()
-            # Fast 1.0s probe to check DB connectivity
-            async with db_pool.connection(timeout=1.0) as conn:
-                pass
-            _checkpointer_instance = AsyncPostgresSaver(db_pool)
-            logger.info("Using PostgreSQL AsyncPostgresSaver checkpointer.")
-        except Exception as e:
-            logger.warning(
-                f"PostgreSQL checkpointer probe failed ({e}). "
-                f"Falling back to zero-latency MemorySaver checkpointer."
-            )
-            _checkpointer_instance = _memory_saver_instance
+        _checkpointer_instance = _memory_saver_instance
+        logger.info("Using zero-latency MemorySaver checkpointer for chatbot workflow.")
     return _checkpointer_instance
 
 
 async def setup_checkpointer() -> Any:
-    """Initialize checkpointer and run setup migrations for LangGraph postgres tables if available."""
-    checkpointer = await get_checkpointer()
-    if isinstance(checkpointer, AsyncPostgresSaver):
-        logger.info("Setting up LangGraph AsyncPostgresSaver database tables...")
-        try:
-            await checkpointer.setup()
-        except Exception as e:
-            logger.warning(f"Failed to setup Postgres checkpointer tables: {e}")
-    return checkpointer
+    """Initialize checkpointer."""
+    return await get_checkpointer()
 
 
 async def prefetch_memory_parallel(

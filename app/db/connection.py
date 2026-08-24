@@ -14,7 +14,7 @@ pool: AsyncConnectionPool | None = None
 
 
 async def init_db_pool() -> AsyncConnectionPool:
-    """Initialize global async connection pool with 1.0s timeout to prevent 30s hangs."""
+    """Initialize global async connection pool with 5.0s timeout for cloud DB connections."""
     global pool
     if pool is None:
         logger.info("Initializing PostgreSQL async connection pool...")
@@ -22,9 +22,10 @@ async def init_db_pool() -> AsyncConnectionPool:
             conninfo=settings.SUPABASE_POSTGRES_DIRECT_URL,
             min_size=1,
             max_size=10,
-            timeout=1.0,
+            timeout=5.0,
             max_waiting=50,
             open=False,
+            kwargs={"prepare_threshold": None},
         )
         try:
             await pool.open()
@@ -47,16 +48,16 @@ async def close_db_pool() -> None:
 
 @asynccontextmanager
 async def get_db_connection() -> AsyncGenerator[psycopg.AsyncConnection, None]:
-    """Provide a non-blocking async database connection from the pool with fast 1.0s fail-fast timeout."""
+    """Provide a non-blocking async database connection from the pool with 5.0s timeout."""
     global pool
     if pool is None:
         await init_db_pool()
 
     try:
-        async with pool.connection(timeout=1.0) as conn:
+        async with pool.connection(timeout=5.0) as conn:
             yield conn
     except (PoolTimeout, psycopg.OperationalError) as e:
-        logger.warning(f"Database connection pool checkout failed (<1s): {e}")
+        logger.warning(f"Database connection pool checkout failed: {e}")
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Database service is currently offline or unreachable.",

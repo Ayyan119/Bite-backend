@@ -207,6 +207,31 @@ async def confirm_meal(
             detail="Meal confirm request must contain at least one item.",
         )
 
+    # Auto-generate user caption and sanitize food names if not provided by user
+    sanitized_items = []
+    for item in payload.items:
+        food_name = (item.food_name or "Food Item").strip().title()
+        item.food_name = food_name
+        sanitized_items.append(item)
+    payload.items = sanitized_items
+
+    user_caption_final = payload.user_caption
+    if not user_caption_final or not user_caption_final.strip():
+        item_names = [item.food_name for item in payload.items if item.food_name]
+        if item_names:
+            if len(item_names) == 1:
+                user_caption_final = f"{item_names[0]} Meal"
+            elif len(item_names) == 2:
+                user_caption_final = f"{item_names[0]} & {item_names[1]}"
+            else:
+                user_caption_final = (
+                    f"{item_names[0]}, {item_names[1]} & {len(item_names) - 2} items"
+                )
+        else:
+            user_caption_final = f"{payload.meal_type.title()} Log"
+
+    payload.user_caption = user_caption_final
+
     # Compute macro totals and aggregate micronutrient dictionary
     total_calories = sum(item.calories for item in payload.items)
     total_protein_g = sum(item.protein_g for item in payload.items)
@@ -248,7 +273,7 @@ async def confirm_meal(
             total_calories, total_protein_g, total_carbs_g, total_fat_g,
             aggregated_nutrients
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb)
         RETURNING id, user_id, logged_at
     )
     INSERT INTO public.meal_items (
@@ -270,7 +295,7 @@ async def confirm_meal(
         items.is_fallback,
         items.raw_usda_nutrients
     FROM new_log,
-    jsonb_to_recordset($10::jsonb) AS items(
+    jsonb_to_recordset(%s::jsonb) AS items(
         food_name TEXT,
         fdc_id INT,
         portion_amount NUMERIC,
@@ -293,12 +318,28 @@ async def confirm_meal(
         async with get_db_connection() as conn:
             async with conn.cursor() as cur:
                 await cur.execute(
+                    """
+                    INSERT INTO public.profiles (id, email, display_name)
+                    VALUES (%s, %s, %s)
+                    ON CONFLICT (id) DO NOTHING;
+                    """,
+                    (
+                        str(current_user.user_id),
+                        current_user.email or "developer@example.com",
+                        (
+                            current_user.email.split("@")[0]
+                            if current_user.email
+                            else "User"
+                        ),
+                    ),
+                )
+                await cur.execute(
                     cte_query,
                     (
                         str(current_user.user_id),
                         payload.meal_type,
                         payload.image_url,
-                        payload.user_caption,
+                        user_caption_final,
                         round(total_calories, 2),
                         round(total_protein_g, 2),
                         round(total_carbs_g, 2),
