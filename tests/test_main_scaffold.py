@@ -15,6 +15,19 @@ async def test_uvloop_installed():
 
 
 @pytest.mark.asyncio
+async def test_root_welcome_endpoint():
+    """Verify GET / returns status 200 and root welcome payload."""
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://testserver"
+    ) as client:
+        response = await client.get("/")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "online"
+        assert "documentation" in data
+
+
+@pytest.mark.asyncio
 async def test_health_liveness_endpoint():
     """Verify GET /health returns status 200 and correct JSON payload."""
     async with AsyncClient(

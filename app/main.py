@@ -66,6 +66,8 @@ app = FastAPI(
     version="1.0.0",
     default_response_class=ORJSONResponse,
     lifespan=lifespan,
+    docs_url="/docs",
+    redoc_url="/redoc",
 )
 
 # Add custom Middlewares
@@ -87,6 +89,22 @@ setup_exception_handlers(app)
 
 # Include API v1 Router
 app.include_router(api_v1_router)
+
+
+@app.get("/", response_class=ORJSONResponse, status_code=status.HTTP_200_OK)
+async def root_welcome() -> ORJSONResponse:
+    """Root welcome route providing API overview and interactive documentation links."""
+    return ORJSONResponse(
+        status_code=status.HTTP_200_OK,
+        content={
+            "message": "Welcome to Project Bite API!",
+            "status": "online",
+            "version": "1.0.0",
+            "documentation": "/docs",
+            "health_check": "/health",
+            "api_v1_prefix": "/api/v1",
+        },
+    )
 
 
 @app.get("/health", response_class=ORJSONResponse, status_code=status.HTTP_200_OK)
