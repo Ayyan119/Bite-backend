@@ -11,6 +11,7 @@ from httpx import ASGITransport, AsyncClient
 
 from app.api.deps import clear_claims_cache, get_current_user, get_jwt_secret
 from app.core.config import settings
+from app.main import app
 from app.schemas.auth import CurrentUser
 
 # Create test router exposing protected test route
@@ -149,3 +150,19 @@ async def test_protected_route_invalid_uuid_claim():
         response = await client.get("/protected", headers=headers)
         assert response.status_code == 401
         assert "invalid UUID" in response.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_generate_dev_token_endpoint():
+    """Verify POST /api/v1/auth/dev-token generates a valid signed Bearer JWT token."""
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://testserver"
+    ) as client:
+        response = await client.post(
+            "/api/v1/auth/dev-token", json={"email": "tester@example.com"}
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert "access_token" in data
+        assert data["token_type"] == "bearer"
+        assert data["email"] == "tester@example.com"
