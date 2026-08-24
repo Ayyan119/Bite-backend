@@ -1,0 +1,25 @@
+graph TD
+    A[User Input: Chat Prompt] --> B[FastAPI /api/v1/chat SSE Endpoint]
+    B -->|Extract user_id from JWT| C[Parallel Memory Read via asyncio.gather]
+
+    subgraph Dual Memory Architecture
+        C --> D[Short-Term Memory: AsyncPostgresSaver Checkpoints]
+        C --> E[Long-Term Memory: Profile JSONB Context Injection <0.1ms]
+    end
+
+    D --> F[Conversational Agent Node: ChatOpenAI gpt-4o-mini]
+    E --> F
+
+    subgraph Non-Blocking Background Tasks: asyncio.create_task
+        F -->|If Msg Count > 10| G[Async History Summarizer]
+        G -->|Update Checkpoint Summary| D
+        F -->|Extract Allergies & Preferences| H[Async Long-Term Fact Extractor]
+        H -->|Save JSONB Facts| E
+    end
+
+    subgraph Tool Calling Engine: 6 Tenant-Isolated Tools
+        F -->|Parallel Search| I[search_usda_food]
+        F -->|Meal CRUD & Analytics| J[log_meal / get_daily_summary / get_micronutrient_total]
+    end
+
+    F -->|Real-Time Action Status & Token Stream| K[Flutter UI Live SSE Stream]
