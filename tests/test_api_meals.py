@@ -1,6 +1,6 @@
-"""Unit tests for Food Vision Analyze endpoint and image compression guard."""
+"""Unit tests for Food Vision Analyze & Single-Query CTE Confirm endpoints."""
 
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
@@ -158,3 +158,116 @@ async def test_analyze_meal_file_upload_success():
             data = response.json()
             assert data["total_calories"] == 34.0
             assert data["detected_items"][0]["food_name"] == "Steamed Broccoli"
+
+
+@pytest.mark.asyncio
+async def test_confirm_meal_unauthorized():
+    """Verify 401 response when confirm endpoint is called without JWT auth header."""
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://testserver"
+    ) as client:
+        response = await client.post("/api/v1/meals/confirm", json={"items": []})
+        assert response.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_confirm_meal_empty_items_validation():
+    """Verify 400 response when items list is empty."""
+    token = create_test_jwt()
+    headers = {"Authorization": f"Bearer {token}"}
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://testserver"
+    ) as client:
+        response = await client.post(
+            "/api/v1/meals/confirm",
+            json={"meal_type": "lunch", "items": []},
+            headers=headers,
+        )
+        assert response.status_code == 400
+        data = response.json()
+        assert "error" in data
+        assert "must contain at least one item" in data["error"]["message"]
+
+
+@pytest.mark.asyncio
+async def test_confirm_meal_single_cte_success():
+    """Verify POST /api/v1/meals/confirm executes single CTE query and returns 201 Created."""
+    test_user_id = str(uuid4())
+    generated_meal_id = uuid4()
+    token = create_test_jwt(user_id=test_user_id)
+    headers = {"Authorization": f"Bearer {token}"}
+
+    confirm_payload = {
+        "meal_type": "dinner",
+        "user_caption": "Healthy dinner bowl",
+        "image_url": "https://example.com/dinner.jpg",
+        "items": [
+            {
+                "food_name": "Grilled Salmon",
+                "fdc_id": 175168,
+                "portion_amount": 1.0,
+                "portion_unit": "fillet",
+                "gram_weight": 180.0,
+                "calories": 360.0,
+                "protein_g": 36.0,
+                "carbs_g": 0.0,
+                "fat_g": 22.0,
+                "is_fallback": False,
+                "raw_usda_nutrients": {"Calcium (mg)": 15.0},
+            },
+            {
+                "food_name": "Quinoa",
+                "fdc_id": 168874,
+                "portion_amount": 1.0,
+                "portion_unit": "cup",
+                "gram_weight": 185.0,
+                "calories": 222.0,
+                "protein_g": 8.0,
+                "carbs_g": 39.0,
+                "fat_g": 3.5,
+                "is_fallback": False,
+                "raw_usda_nutrients": {"Iron (mg)": 2.8},
+            },
+        ],
+    }
+
+    mock_cursor = AsyncMock()
+    mock_cursor.fetchone.return_value = (generated_meal_id, "2026-08-24 18:40:00+00")
+
+    mock_cursor_cm = AsyncMock()
+    mock_cursor_cm.__aenter__.return_value = mock_cursor
+    mock_cursor_cm.__aexit__.return_value = None
+
+    mock_conn = MagicMock()
+    mock_conn.cursor.return_value = mock_cursor_cm
+
+    mock_conn_cm = AsyncMock()
+    mock_conn_cm.__aenter__.return_value = mock_conn
+    mock_conn_cm.__aexit__.return_value = None
+
+    with patch(
+        "app.api.v1.endpoints.meals.get_db_connection", return_value=mock_conn_cm
+    ):
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://testserver"
+        ) as client:
+            response = await client.post(
+                "/api/v1/meals/confirm", json=confirm_payload, headers=headers
+            )
+            assert response.status_code == 201
+            data = response.json()
+            assert data["meal_id"] == str(generated_meal_id)
+            assert data["user_id"] == test_user_id
+            assert data["meal_type"] == "dinner"
+            assert data["total_calories"] == 582.0
+            assert data["total_protein_g"] == 44.0
+            assert data["total_carbs_g"] == 39.0
+            assert data["total_fat_g"] == 25.5
+            assert data["item_count"] == 2
+
+            # Assert CTE SQL query was executed on database cursor
+            assert mock_cursor.execute.called
+            executed_sql = mock_cursor.execute.call_args[0][0]
+            assert "WITH new_log AS" in executed_sql
+            assert "jsonb_to_recordset" in executed_sql

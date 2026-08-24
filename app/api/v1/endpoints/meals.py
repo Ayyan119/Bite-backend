@@ -1,12 +1,14 @@
-"""Meal Analysis and CRUD Endpoints Router."""
+"""Meal Analysis, Persistence & CRUD Endpoints Router."""
 
 import io
+import json
 import logging
 from typing import Optional
 from PIL import Image
 
 from fastapi import (
     APIRouter,
+    Body,
     Depends,
     File,
     Form,
@@ -19,12 +21,15 @@ from fastapi.responses import ORJSONResponse
 
 from app.api.deps import get_current_user
 from app.core.config import MAX_IMAGE_SIZE_BYTES, validate_image_input
+from app.db.connection import get_db_connection
 from app.schemas.auth import CurrentUser
 from app.schemas.ingestion import IngestionState
 from app.schemas.meal_api import (
     AnalyzedItemResponse,
     MealAnalysisResponse,
     MealAnalyzeRequest,
+    MealConfirmRequest,
+    MealConfirmResponse,
 )
 from app.services.langgraph.graph import ingestion_graph
 
@@ -89,7 +94,6 @@ async def analyze_meal(
             final_caption = json_req.user_caption or final_caption
             if json_req.image_url:
                 if json_req.image_url.startswith("data:image"):
-                    # Extract base64 bytes if data URI
                     import base64
 
                     header, encoded = json_req.image_url.split(",", 1)
@@ -177,4 +181,151 @@ async def analyze_meal(
         aggregated_nutrients=graph_result.get("aggregated_nutrients", {}),
         confidence_score=graph_result.get("vision_confidence", 1.0),
         warnings=graph_result.get("errors", []),
+    )
+
+
+@router.post(
+    "/confirm",
+    response_model=MealConfirmResponse,
+    status_code=status.HTTP_201_CREATED,
+    response_class=ORJSONResponse,
+)
+async def confirm_meal(
+    payload: MealConfirmRequest,
+    current_user: CurrentUser = Depends(get_current_user),
+) -> MealConfirmResponse:
+    """Atomically commit a user-reviewed meal log and item breakdown into database.
+
+    Executes a single-query Common Table Expression (CTE) SQL statement over AsyncConnectionPool,
+    persisting both public.meal_logs and public.meal_items rows in 1 DB network round-trip.
+    """
+    if not payload.items:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Meal confirm request must contain at least one item.",
+        )
+
+    # Compute macro totals and aggregate micronutrient dictionary
+    total_calories = sum(item.calories for item in payload.items)
+    total_protein_g = sum(item.protein_g for item in payload.items)
+    total_carbs_g = sum(item.carbs_g for item in payload.items)
+    total_fat_g = sum(item.fat_g for item in payload.items)
+
+    aggregated_nutrients = {}
+    for item in payload.items:
+        if item.raw_usda_nutrients:
+            for nut_name, nut_val in item.raw_usda_nutrients.items():
+                if isinstance(nut_val, (int, float)):
+                    aggregated_nutrients[nut_name] = aggregated_nutrients.get(
+                        nut_name, 0.0
+                    ) + float(nut_val)
+
+    # Prepare item parameters array for CTE jsonb_to_recordset
+    items_list = [
+        {
+            "food_name": item.food_name,
+            "fdc_id": item.fdc_id,
+            "portion_amount": float(item.portion_amount),
+            "portion_unit": item.portion_unit,
+            "gram_weight": float(item.gram_weight),
+            "calories": float(item.calories),
+            "protein_g": float(item.protein_g),
+            "carbs_g": float(item.carbs_g),
+            "fat_g": float(item.fat_g),
+            "is_fallback": bool(item.is_fallback),
+            "raw_usda_nutrients": json.dumps(item.raw_usda_nutrients or {}),
+        }
+        for item in payload.items
+    ]
+
+    # Single CTE statement inserting parent meal_logs and child meal_items in 1 DB round-trip
+    cte_query = """
+    WITH new_log AS (
+        INSERT INTO public.meal_logs (
+            user_id, meal_type, image_url, user_caption,
+            total_calories, total_protein_g, total_carbs_g, total_fat_g,
+            aggregated_nutrients
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb)
+        RETURNING id, user_id, logged_at
+    )
+    INSERT INTO public.meal_items (
+        meal_log_id, user_id, food_name, fdc_id, portion_amount, portion_unit,
+        gram_weight, calories, protein_g, carbs_g, fat_g, is_fallback, raw_usda_nutrients
+    )
+    SELECT
+        new_log.id,
+        new_log.user_id,
+        items.food_name,
+        items.fdc_id,
+        items.portion_amount,
+        items.portion_unit,
+        items.gram_weight,
+        items.calories,
+        items.protein_g,
+        items.carbs_g,
+        items.fat_g,
+        items.is_fallback,
+        items.raw_usda_nutrients
+    FROM new_log,
+    jsonb_to_recordset($10::jsonb) AS items(
+        food_name TEXT,
+        fdc_id INT,
+        portion_amount NUMERIC,
+        portion_unit TEXT,
+        gram_weight NUMERIC,
+        calories NUMERIC,
+        protein_g NUMERIC,
+        carbs_g NUMERIC,
+        fat_g NUMERIC,
+        is_fallback BOOLEAN,
+        raw_usda_nutrients JSONB
+    )
+    RETURNING (SELECT id FROM new_log) AS meal_id, (SELECT logged_at FROM new_log) AS logged_at;
+    """
+
+    try:
+        async with get_db_connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    cte_query,
+                    (
+                        str(current_user.user_id),
+                        payload.meal_type,
+                        payload.image_url,
+                        payload.user_caption,
+                        round(total_calories, 2),
+                        round(total_protein_g, 2),
+                        round(total_carbs_g, 2),
+                        round(total_fat_g, 2),
+                        json.dumps(aggregated_nutrients),
+                        json.dumps(items_list),
+                    ),
+                )
+                row = await cur.fetchone()
+                if not row:
+                    raise HTTPException(
+                        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                        detail="Failed to persist meal log transaction.",
+                    )
+                meal_id, logged_at = row[0], row[1]
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Error persisting confirmed meal log via CTE query")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to persist confirmed meal log: {str(e)}",
+        )
+
+    return MealConfirmResponse(
+        meal_id=meal_id,
+        user_id=current_user.user_id,
+        logged_at=str(logged_at),
+        meal_type=payload.meal_type,
+        total_calories=round(total_calories, 2),
+        total_protein_g=round(total_protein_g, 2),
+        total_carbs_g=round(total_carbs_g, 2),
+        total_fat_g=round(total_fat_g, 2),
+        item_count=len(payload.items),
     )
