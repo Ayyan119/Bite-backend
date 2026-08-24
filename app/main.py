@@ -1,7 +1,7 @@
 """FastAPI Application Main Entrypoint.
 
 Configured with uvloop event loop, ORJSONResponse serialization, CORS middleware,
-lifespan connection pool management, global exception handling, and health probes.
+security headers, rate limiting, lifespan connection pool management, and health probes.
 """
 
 import logging
@@ -20,8 +20,13 @@ from fastapi.responses import ORJSONResponse
 from app.api.v1.router import api_v1_router
 from app.core.config import settings
 from app.core.errors import setup_exception_handlers
+from app.core.middleware import (
+    ProcessTimeMiddleware,
+    RateLimiterMiddleware,
+    SecurityHeadersMiddleware,
+)
 from app.db.connection import close_db_pool, init_db_pool, pool
-from app.tools.usda import get_shared_httpx_client, _shared_httpx_client
+from app.tools.usda import _shared_httpx_client, get_shared_httpx_client
 
 logging.basicConfig(
     level=getattr(logging, settings.LOG_LEVEL.upper(), logging.INFO),
@@ -63,10 +68,15 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# Add custom Middlewares
+app.add_middleware(ProcessTimeMiddleware)
+app.add_middleware(SecurityHeadersMiddleware)
+app.add_middleware(RateLimiterMiddleware, max_requests=120, window_seconds=60)
+
 # Configure CORS Middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Adjust for specific production frontend domain origins
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
