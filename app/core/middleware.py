@@ -24,7 +24,18 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["X-XSS-Protection"] = "1; mode=block"
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
-        response.headers["Content-Security-Policy"] = "default-src 'self'"
+
+        # Allow Swagger UI and ReDoc to load CDN bundles and inline styles/scripts for interactive documentation
+        if request.url.path in ("/docs", "/redoc", "/openapi.json"):
+            response.headers["Content-Security-Policy"] = (
+                "default-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+                "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+                "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+                "img-src 'self' data: https:;"
+            )
+        else:
+            response.headers["Content-Security-Policy"] = "default-src 'self'"
+
         if settings.APP_ENV != "development":
             response.headers["Strict-Transport-Security"] = (
                 "max-age=31536000; includeSubDomains; preload"
@@ -60,8 +71,15 @@ class RateLimiterMiddleware(BaseHTTPMiddleware):
     async def dispatch(
         self, request: Request, call_next: RequestResponseEndpoint
     ) -> Response:
-        # Exclude health probe endpoints from rate limiting
-        if request.url.path in ("/health", "/health/ready"):
+        # Exclude health probe endpoints and docs from rate limiting
+        if request.url.path in (
+            "/health",
+            "/health/ready",
+            "/",
+            "/docs",
+            "/redoc",
+            "/openapi.json",
+        ):
             return await call_next(request)
 
         client_ip = request.client.host if request.client else "127.0.0.1"
