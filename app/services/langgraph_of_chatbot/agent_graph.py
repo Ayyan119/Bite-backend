@@ -25,6 +25,7 @@ from app.services.langgraph_of_chatbot.memory_long_term import (
 )
 from app.services.langgraph_of_chatbot.usda_tool import search_usda_food
 from app.services.langgraph_of_chatbot.db_tools import (
+    current_user_id_var,
     log_meal,
     get_daily_summary,
     get_micronutrient_total,
@@ -59,8 +60,8 @@ class ChatAgentState(TypedDict):
 async def agent_node(
     state: ChatAgentState, config: Optional[RunnableConfig] = None
 ) -> Dict[str, Any]:
-    """
-    Conversational agent decision node.
+    """Conversational agent decision node.
+
     Injects dynamic dates, long-term context, and trimmed history window into system prompt,
     then invokes ChatOpenAI bound with all 6 tools.
     """
@@ -135,45 +136,56 @@ async def stream_chatbot_response(
     thread_id: str,
     profile_data: Optional[Dict[str, Any]] = None,
 ) -> AsyncGenerator[str, None]:
-    """
-    Executes compiled chatbot graph with SSE streaming (astream_events v2).
+    """Executes compiled chatbot graph with SSE streaming (astream_events v2).
+
     Routes LangSmith traces to user-specific project 'Bite-{user_id}-{user_name}'
     and maintains separate session threads via thread_id.
     """
-    graph = await get_compiled_chatbot_graph()
+    # Bind ContextVar for sub-second tool execution
+    token = current_user_id_var.set(user_id)
+    try:
+        graph = await get_compiled_chatbot_graph()
 
-    user_name = (
-        (profile_data.get("display_name") or "user").strip().replace(" ", "_")
-        if profile_data
-        else "user"
-    )
-    project_name = f"Bite-{user_id}-{user_name}"
+        user_name = (
+            (profile_data.get("display_name") or "user").strip().replace(" ", "_")
+            if profile_data
+            else "user"
+        )
+        project_name = f"Bite-{user_id}-{user_name}"
 
-    config: RunnableConfig = {
-        "configurable": {
-            "thread_id": f"thread_{thread_id}",
+        config: RunnableConfig = {
+            "configurable": {
+                "thread_id": f"thread_{thread_id}",
+                "user_id": user_id,
+            },
+            "metadata": {
+                "user_id": user_id,
+                "user_name": user_name,
+                "thread_id": thread_id,
+            },
+            "tags": [
+                f"user_id:{user_id}",
+                f"user_name:{user_name}",
+                f"thread:{thread_id}",
+            ],
+            "project_name": project_name,
+        }
+
+        long_term_context = format_long_term_context(profile_data)
+
+        initial_input = {
+            "messages": [HumanMessage(content=user_input)],
+            "long_term_context": long_term_context,
+            "short_term_summary": "",
             "user_id": user_id,
-        },
-        "metadata": {
-            "user_id": user_id,
-            "user_name": user_name,
-            "thread_id": thread_id,
-        },
-        "tags": [f"user_id:{user_id}", f"user_name:{user_name}", f"thread:{thread_id}"],
-        "project_name": project_name,
-    }
+        }
 
-    long_term_context = format_long_term_context(profile_data)
+        with tracing_v2_enabled(project_name=project_name):
+            events_gen = graph.astream_events(
+                initial_input, config=config, version="v2"
+            )
 
-    initial_input = {
-        "messages": [HumanMessage(content=user_input)],
-        "long_term_context": long_term_context,
-        "short_term_summary": "",
-        "user_id": user_id,
-    }
-
-    with tracing_v2_enabled(project_name=project_name):
-        events_gen = graph.astream_events(initial_input, config=config, version="v2")
-
-        async for sse_chunk in parse_and_stream_astream_events(events_gen):
-            yield sse_chunk
+            async for sse_chunk in parse_and_stream_astream_events(events_gen):
+                yield sse_chunk
+    finally:
+        current_user_id_var.reset(token)
