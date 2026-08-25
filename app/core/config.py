@@ -37,12 +37,12 @@ class Settings(BaseSettings):
         description="USDA FoodData Central API Base URL",
     )
     VISION_LLM_MODEL: str = Field(
-        default="gpt-4o",
-        description="Vision LLM model identifier for complex visual analysis",
+        default="gpt-4o-mini",
+        description="Vision LLM model identifier for fast visual analysis",
     )
     FAST_LLM_MODEL: str = Field(
         default="gpt-4o-mini",
-        description="Fast LLM model identifier for fallback macro estimation and fast tasks",
+        description="Fast LLM model identifier for chatbot and fast tasks",
     )
     SUPABASE_JWT_SECRET: str | None = Field(
         default=None, description="Supabase JWT Verification Secret"

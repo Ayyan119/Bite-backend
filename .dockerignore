@@ -1,0 +1,30 @@
+# Environment and local databases
+.env
+*.db
+*.sqlite3
+
+# Git & IDE files
+.git
+.gitignore
+.vscode
+.idea
+
+# Python cache & virtual environments
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache
+venv/
+.venv/
+env/
+.env/
+
+# Exclude non-backend directories (tests, Streamlit UI, docs, specs, plans)
+streamlit_app/
+tests/
+Plans/
+specs/
+docs/
+PROJECT_PLAN.md
+README.md
