@@ -7,12 +7,14 @@ logger = logging.getLogger(__name__)
 
 # Human-readable status badges for client UI live progress
 TOOL_STATUS_MESSAGES: Dict[str, str] = {
+    "get_current_time": "Checking real-time date, time & timezone...",
     "search_usda_food": "Searching USDA database & calculating regional estimates...",
     "log_meal": "Saving meal items to your log...",
     "get_daily_summary": "Retrieving your daily nutrition summary...",
     "get_micronutrient_total": "Calculating micronutrient totals in parallel...",
     "update_meal_item": "Updating meal item & recalculating totals...",
     "delete_meal_log": "Deleting meal log entry...",
+    "get_user_profile": "Reading your profile and health metrics...",
 }
 
 

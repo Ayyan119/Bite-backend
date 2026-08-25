@@ -1,6 +1,7 @@
 """Database Migration Runner Script for Project Bite PostgreSQL."""
 
 import asyncio
+import glob
 import logging
 import os
 import psycopg
@@ -9,7 +10,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("migration_runner")
 
 ENV_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), ".env")
-MIGRATION_FILE = os.path.join(os.path.dirname(__file__), "001_initial_schema.sql")
+MIGRATIONS_DIR = os.path.dirname(__file__)
 
 
 def load_env():
@@ -26,7 +27,7 @@ def load_env():
 async def run_migration():
     load_env()
     db_url = os.getenv("SUPABASE_POSTGRES_DIRECT_URL")
-    if not db_url or "localhost" in db_url and "password" in db_url:
+    if not db_url or ("localhost" in db_url and "password" in db_url):
         logger.warning(f"DB URL in .env: {db_url}")
 
     logger.info("Connecting to PostgreSQL database...")
@@ -35,14 +36,15 @@ async def run_migration():
             db_url, autocommit=True
         ) as conn:
             async with conn.cursor() as cur:
-                with open(MIGRATION_FILE) as f:
-                    sql_script = f.read()
-
-                logger.info(
-                    "Executing initial schema migration (001_initial_schema.sql)..."
+                migration_files = sorted(
+                    glob.glob(os.path.join(MIGRATIONS_DIR, "*.sql"))
                 )
-                await cur.execute(sql_script)
-                logger.info("✅ Migration executed successfully!")
+                for mig_file in migration_files:
+                    logger.info(f"Executing migration {os.path.basename(mig_file)}...")
+                    with open(mig_file) as f:
+                        sql_script = f.read()
+                    await cur.execute(sql_script)
+                    logger.info(f"✅ Executed {os.path.basename(mig_file)} successfully!")
 
                 # Check tables
                 await cur.execute(

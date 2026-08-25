@@ -46,6 +46,7 @@ class IngestionState(TypedDict):
     # Node 2 Outputs
     detected_items: List[VisionItem]
     vision_confidence: float
+    detected_meal_type: Optional[str]
 
     # Node 3 Outputs
     usda_matches: Dict[str, Optional[USDANutrientProfile]]
@@ -100,6 +101,10 @@ class VisionAnalysisResult(BaseModel):
     caption_mismatch_reason: Optional[str] = Field(
         default=None,
         description="Explanation if caption_match_score is less than 0.6.",
+    )
+    detected_meal_type: Optional[str] = Field(
+        default=None,
+        description="Guessed or caption-inferred meal category: 'breakfast', 'lunch', 'dinner', or 'snack'.",
     )
 
 

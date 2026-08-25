@@ -24,13 +24,18 @@ from app.services.langgraph_of_chatbot.memory_long_term import (
     maybe_trigger_long_term_extraction,
 )
 from app.services.langgraph_of_chatbot.usda_tool import search_usda_food
+from datetime import datetime
 from app.services.langgraph_of_chatbot.db_tools import (
     current_user_id_var,
+    get_current_time,
     log_meal,
     get_daily_summary,
     get_micronutrient_total,
     update_meal_item,
     delete_meal_log,
+    get_historical_analytics,
+    get_user_profile,
+    update_user_profile,
 )
 from app.services.langgraph_of_chatbot.agent_prompts import build_system_prompt
 from app.services.langgraph_of_chatbot.action_status_streamer import (
@@ -39,14 +44,18 @@ from app.services.langgraph_of_chatbot.action_status_streamer import (
 
 logger = logging.getLogger(__name__)
 
-# Complete list of 6 tenant-isolated agent tools
+# Complete list of 10 tenant-isolated agent tools
 CHATBOT_TOOLS = [
+    get_current_time,
     search_usda_food,
     log_meal,
     get_daily_summary,
     get_micronutrient_total,
     update_meal_item,
     delete_meal_log,
+    get_user_profile,
+    update_user_profile,
+    get_historical_analytics,
 ]
 
 
@@ -63,7 +72,7 @@ async def agent_node(
     """Conversational agent decision node.
 
     Injects dynamic dates, long-term context, and trimmed history window into system prompt,
-    then invokes ChatOpenAI bound with all 6 tools.
+    then invokes ChatOpenAI bound with all tools.
     """
     messages = state.get("messages", [])
     user_id = state.get("user_id") or (
@@ -74,9 +83,16 @@ async def agent_node(
 
     # Slice history window to latest 4 messages + SystemPrompt
     trimmed_messages = get_trimmed_messages(messages, max_messages=4)
+    from app.core.config import get_local_now
+
+    client_tz = (
+        config.get("configurable", {}).get("client_timezone") if config else None
+    )
     sys_prompt = build_system_prompt(
         long_term_context=long_term_context,
         short_term_summary=short_term_summary,
+        now=get_local_now(client_tz),
+        client_timezone=client_tz,
     )
 
     full_messages = [SystemMessage(content=sys_prompt)] + [
@@ -130,11 +146,76 @@ async def get_compiled_chatbot_graph(checkpointer: Any = None):
     return _compiled_graph
 
 
+async def fetch_user_profile_data(user_id: str) -> Dict[str, Any]:
+    """Fetch user profile body metrics and memory facts from PostgreSQL."""
+    try:
+        from psycopg.rows import dict_row
+        from app.db.connection import get_db_connection
+
+        async with get_db_connection() as conn:
+            async with conn.cursor(row_factory=dict_row) as cur:
+                await cur.execute(
+                    """
+                    SELECT id, email, display_name, height_cm, weight_kg, age, gender,
+                           activity_level, primary_goal, bmr, tdee,
+                           target_calories, target_protein_g, target_carbs_g, target_fat_g,
+                           target_micronutrients, long_term_memory
+                    FROM public.profiles
+                    WHERE id = %s;
+                    """,
+                    (user_id,),
+                )
+                row = await cur.fetchone()
+                if row:
+                    return dict(row)
+    except Exception as e:
+        logger.warning(f"Error fetching profile data for user {user_id}: {e}")
+    return {}
+
+
+async def fetch_recent_session_history(
+    session_id: str, user_id: str, limit: int = 6
+) -> List[BaseMessage]:
+    """Fetches past messages from chat_messages table to hydrate conversational context across server restarts."""
+    from langchain_core.messages import AIMessage, HumanMessage
+    from psycopg.rows import dict_row
+    from app.db.connection import get_db_connection
+
+    history: List[BaseMessage] = []
+    try:
+        async with get_db_connection() as conn:
+            async with conn.cursor(row_factory=dict_row) as cur:
+                await cur.execute(
+                    """
+                    SELECT role, content
+                    FROM public.chat_messages
+                    WHERE session_id = %s AND user_id = %s
+                    ORDER BY created_at DESC
+                    LIMIT %s;
+                    """,
+                    (session_id, user_id, limit + 1),
+                )
+                rows = await cur.fetchall()
+                if rows:
+                    # Skip the first row (the message currently being processed)
+                    rows = rows[1:]
+                    rows.reverse()
+                    for r in rows:
+                        if r["role"] == "user":
+                            history.append(HumanMessage(content=r["content"]))
+                        elif r["role"] == "assistant":
+                            history.append(AIMessage(content=r["content"]))
+    except Exception as e:
+        logger.debug(f"Could not load recent session history: {e}")
+    return history
+
+
 async def stream_chatbot_response(
     user_input: str,
     user_id: str,
     thread_id: str,
     profile_data: Optional[Dict[str, Any]] = None,
+    client_timezone: Optional[str] = None,
 ) -> AsyncGenerator[str, None]:
     """Executes compiled chatbot graph with SSE streaming (astream_events v2).
 
@@ -144,6 +225,9 @@ async def stream_chatbot_response(
     # Bind ContextVar for sub-second tool execution
     token = current_user_id_var.set(user_id)
     try:
+        if profile_data is None:
+            profile_data = await fetch_user_profile_data(user_id)
+
         graph = await get_compiled_chatbot_graph()
 
         user_name = (
@@ -157,6 +241,7 @@ async def stream_chatbot_response(
             "configurable": {
                 "thread_id": f"thread_{thread_id}",
                 "user_id": user_id,
+                "client_timezone": client_timezone,
             },
             "metadata": {
                 "user_id": user_id,
@@ -172,9 +257,11 @@ async def stream_chatbot_response(
         }
 
         long_term_context = format_long_term_context(profile_data)
+        past_msgs = await fetch_recent_session_history(thread_id, user_id)
+        all_msgs = past_msgs + [HumanMessage(content=user_input)]
 
         initial_input = {
-            "messages": [HumanMessage(content=user_input)],
+            "messages": all_msgs,
             "long_term_context": long_term_context,
             "short_term_summary": "",
             "user_id": user_id,

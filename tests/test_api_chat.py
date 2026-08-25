@@ -18,7 +18,9 @@ def cleanup_cache():
     clear_claims_cache()
 
 
-async def mock_stream_chatbot_generator(user_input: str, user_id: str, thread_id: str):
+async def mock_stream_chatbot_generator(
+    user_input: str, user_id: str, thread_id: str, *args, **kwargs
+):
     """Mock generator yielding simulated SSE event chunks."""
     yield 'event: status\ndata: {"status": "searching_usda", "message": "Searching USDA..."}\n\n'
     yield 'event: message\ndata: {"content": "Logged 300g Cholay with Naan!"}\n\n'
@@ -82,3 +84,45 @@ async def test_chat_endpoint_sse_streaming_success():
             assert "Logged 300g Cholay with Naan!" in content
             assert "event: done" in content
             assert "test-session-123" in content
+
+
+@pytest.mark.asyncio
+async def test_chat_sessions_crud():
+    """Verify chat session creation, listing, message retrieval, and deletion."""
+    test_user_id = str(uuid4())
+    token = create_test_jwt(user_id=test_user_id)
+    headers = {"Authorization": f"Bearer {token}"}
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://testserver"
+    ) as client:
+        # 1. Create a session explicitly
+        create_resp = await client.post(
+            "/api/v1/chat/sessions",
+            json={"title": "High Protein Breakfast Plan"},
+            headers=headers,
+        )
+        assert create_resp.status_code == 201
+        session_data = create_resp.json()
+        assert session_data["title"] == "High Protein Breakfast Plan"
+        session_id = session_data["id"]
+
+        # 2. List sessions
+        list_resp = await client.get("/api/v1/chat/sessions", headers=headers)
+        assert list_resp.status_code == 200
+        sessions = list_resp.json()
+        assert any(s["id"] == session_id for s in sessions)
+
+        # 3. Get messages for this new session (should be empty initially)
+        msg_resp = await client.get(
+            f"/api/v1/chat/sessions/{session_id}/messages", headers=headers
+        )
+        assert msg_resp.status_code == 200
+        assert isinstance(msg_resp.json(), list)
+
+        # 4. Delete session
+        del_resp = await client.delete(
+            f"/api/v1/chat/sessions/{session_id}", headers=headers
+        )
+        assert del_resp.status_code == 200
+        assert del_resp.json()["status"] == "deleted"

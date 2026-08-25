@@ -33,6 +33,27 @@ class BiteAPIClient:
         except Exception as e:
             return False, {"error": str(e)}
 
+    def login(self, email: str, password: str) -> Dict[str, Any]:
+        """Authenticate user with email and password."""
+        url = f"{self.base_url}/api/v1/auth/login"
+        payload = {"email": email, "password": password}
+        resp = requests.post(url, json=payload, timeout=10)
+        resp.raise_for_status()
+        data = resp.json()
+        if "access_token" in data:
+            self.token = data["access_token"]
+        return data
+
+    def register(self, register_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Register a new user account."""
+        url = f"{self.base_url}/api/v1/auth/register"
+        resp = requests.post(url, json=register_data, timeout=10)
+        resp.raise_for_status()
+        data = resp.json()
+        if "access_token" in data:
+            self.token = data["access_token"]
+        return data
+
     def generate_dev_token(
         self, email: Optional[str] = None, user_id: Optional[str] = None
     ) -> Dict[str, Any]:
@@ -67,15 +88,17 @@ class BiteAPIClient:
         image_bytes: Optional[bytes] = None,
         image_url: Optional[str] = None,
         user_caption: Optional[str] = None,
-        meal_type: str = "lunch",
+        meal_type: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Analyze meal image via Vision model & USDA resolver."""
+        """Analyze meal image via Vision model & USDA resolver (auto-detects meal category if omitted)."""
         url = f"{self.base_url}/api/v1/meals/analyze"
         headers = self._headers()
 
         if image_bytes:
             files = {"file": ("meal_photo.jpg", image_bytes, "image/jpeg")}
-            data = {"meal_type": meal_type}
+            data = {}
+            if meal_type:
+                data["meal_type"] = meal_type
             if user_caption:
                 data["user_caption"] = user_caption
             resp = requests.post(
@@ -84,9 +107,10 @@ class BiteAPIClient:
         elif image_url:
             payload = {
                 "image_url": image_url,
-                "meal_type": meal_type,
                 "user_caption": user_caption,
             }
+            if meal_type:
+                payload["meal_type"] = meal_type
             resp = requests.post(url, headers=headers, json=payload, timeout=60)
         else:
             raise ValueError("Either image_bytes or image_url must be provided.")
@@ -97,18 +121,19 @@ class BiteAPIClient:
     def confirm_meal(
         self,
         items: list,
-        meal_type: str = "lunch",
+        meal_type: Optional[str] = None,
         user_caption: Optional[str] = None,
         image_url: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Persist reviewed meal to database."""
+        """Persist reviewed meal to database (upload time and meal category handled by backend)."""
         url = f"{self.base_url}/api/v1/meals/confirm"
         payload = {
-            "meal_type": meal_type,
             "user_caption": user_caption,
             "image_url": image_url,
             "items": items,
         }
+        if meal_type:
+            payload["meal_type"] = meal_type
         resp = requests.post(url, headers=self._headers(), json=payload, timeout=15)
         resp.raise_for_status()
         return resp.json()
@@ -116,6 +141,13 @@ class BiteAPIClient:
     def get_profile(self) -> Dict[str, Any]:
         """Fetch current user profile and macro targets."""
         url = f"{self.base_url}/api/v1/profile"
+        resp = requests.get(url, headers=self._headers(), timeout=10)
+        resp.raise_for_status()
+        return resp.json()
+
+    def get_historical_analytics(self, days: int = 30) -> Dict[str, Any]:
+        """Fetch past days analytics breakdown including meal counts, target completions, and macro totals."""
+        url = f"{self.base_url}/api/v1/dashboard/history?days={days}"
         resp = requests.get(url, headers=self._headers(), timeout=10)
         resp.raise_for_status()
         return resp.json()
@@ -128,13 +160,25 @@ class BiteAPIClient:
         return resp.json()
 
     def stream_chat(
-        self, message: str, conversation_id: Optional[str] = None
+        self,
+        message: str,
+        conversation_id: Optional[str] = None,
+        client_timezone: Optional[str] = None,
     ) -> Generator[Dict[str, Any], None, None]:
         """Stream chat assistant responses via Server-Sent Events (SSE)."""
+        from datetime import datetime
+
+        if not client_timezone:
+            try:
+                client_timezone = str(datetime.now().astimezone().tzinfo)
+            except Exception:
+                client_timezone = "UTC"
+
         url = f"{self.base_url}/api/v1/chat"
         payload = {
             "message": message,
             "conversation_id": conversation_id,
+            "client_timezone": client_timezone,
         }
 
         headers = self._headers()
@@ -161,3 +205,34 @@ class BiteAPIClient:
                     except json.JSONDecodeError:
                         yield {"event": current_event or "message", "data": data_str}
                     current_event = None
+
+    def list_chat_sessions(self) -> list:
+        """Fetch all previous chat sessions for authenticated user."""
+        url = f"{self.base_url}/api/v1/chat/sessions"
+        resp = requests.get(url, headers=self._headers(), timeout=10)
+        resp.raise_for_status()
+        return resp.json()
+
+    def create_chat_session(self, title: Optional[str] = None) -> Dict[str, Any]:
+        """Create a new chat conversation session."""
+        url = f"{self.base_url}/api/v1/chat/sessions"
+        payload = {}
+        if title:
+            payload["title"] = title
+        resp = requests.post(url, headers=self._headers(), json=payload, timeout=10)
+        resp.raise_for_status()
+        return resp.json()
+
+    def get_session_messages(self, session_id: str) -> list:
+        """Retrieve chronological message history for a specific chat session."""
+        url = f"{self.base_url}/api/v1/chat/sessions/{session_id}/messages"
+        resp = requests.get(url, headers=self._headers(), timeout=10)
+        resp.raise_for_status()
+        return resp.json()
+
+    def delete_chat_session(self, session_id: str) -> Dict[str, Any]:
+        """Delete a chat session and all its messages."""
+        url = f"{self.base_url}/api/v1/chat/sessions/{session_id}"
+        resp = requests.delete(url, headers=self._headers(), timeout=10)
+        resp.raise_for_status()
+        return resp.json()

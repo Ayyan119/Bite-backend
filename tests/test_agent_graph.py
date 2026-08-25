@@ -12,15 +12,19 @@ from app.services.langgraph_of_chatbot.agent_graph import (
 @pytest.mark.asyncio
 async def test_agent_graph_assembly_and_compilation():
     """Verify state machine graph assembly, 6 tools binding, and checkpointer compilation."""
-    assert len(CHATBOT_TOOLS) == 6
+    assert len(CHATBOT_TOOLS) == 10
 
     tool_names = [t.name for t in CHATBOT_TOOLS]
+    assert "get_current_time" in tool_names
     assert "search_usda_food" in tool_names
     assert "log_meal" in tool_names
     assert "get_daily_summary" in tool_names
     assert "get_micronutrient_total" in tool_names
     assert "update_meal_item" in tool_names
     assert "delete_meal_log" in tool_names
+    assert "get_user_profile" in tool_names
+    assert "update_user_profile" in tool_names
+    assert "get_historical_analytics" in tool_names
 
     # Test graph build
     builder = build_chatbot_graph()

@@ -8,6 +8,7 @@ from typing import Optional
 VISION_SYSTEM_PROMPT = """You are an expert computer vision clinical nutritionist.
 Your task is to analyze the provided image of a meal alongside any user caption.
 
+Current Time Context: {current_time}
 User caption context: "{user_caption}"
 
 Rules:
@@ -22,7 +23,17 @@ Rules:
    - Always prioritize the actual visual content in the image for food item extraction.
 
 3. PORTION & PREPARATION ESTIMATION:
-   - For valid food items detected, estimate portion weight in grams, human-readable portion description, and cooking method (e.g., "fried", "steamed", "grilled", "raw")."""
+   - For valid food items detected, estimate portion weight in grams, human-readable portion description, and cooking method (e.g., "fried", "steamed", "grilled", "raw").
+
+4. MEAL CATEGORY INFERENCE (detected_meal_type):
+   - Infer the meal category: 'breakfast', 'lunch', 'dinner', or 'snack'.
+   - IF user provided meal category cues in the caption (e.g., "breakfast", "morning", "lunch", "midday", "dinner", "evening", "night", "snack"), prioritize the caption's meal category.
+   - IF NOT provided in caption, infer the meal category from the Current Time Context ({current_time}) and food items:
+     * 05:00 - 11:00 ➔ 'breakfast' (e.g., eggs, oatmeal, toast, pancakes, coffee)
+     * 11:00 - 16:00 ➔ 'lunch' (e.g., sandwiches, salads, rice bowls, wraps)
+     * 16:00 - 18:30 ➔ 'snack' (e.g., fruits, nuts, yogurt, smoothies, light items)
+     * 18:30 - 23:00 ➔ 'dinner' (e.g., steaks, salmon, pasta, curries, full meals)
+     * 23:00 - 05:00 ➔ 'snack' (or late-night 'dinner')"""
 
 
 FALLBACK_SYSTEM_PROMPT = """You are a USDA food database specialist and nutritional science expert.
@@ -35,10 +46,15 @@ Cooking Method: {cooking_method}
 Provide per-100g values for Calories, Protein (g), Carbohydrates (g), Total Fat (g), and major micronutrients (Sodium mg, Potassium mg, Calcium mg, Iron mg, Vitamin C mg, Vitamin A mcg)."""
 
 
-def format_vision_prompt(user_caption: Optional[str] = None) -> str:
-    """Format vision system prompt with optional user caption context."""
+def format_vision_prompt(
+    user_caption: Optional[str] = None, current_time: Optional[str] = None
+) -> str:
+    """Format vision system prompt with optional user caption and current time context."""
     caption_text = user_caption.strip() if user_caption else "None provided"
-    return VISION_SYSTEM_PROMPT.format(user_caption=caption_text)
+    time_text = current_time.strip() if current_time else "Current time not specified"
+    return VISION_SYSTEM_PROMPT.format(
+        user_caption=caption_text, current_time=time_text
+    )
 
 
 def format_fallback_prompt(food_name: str, cooking_method: Optional[str] = None) -> str:
