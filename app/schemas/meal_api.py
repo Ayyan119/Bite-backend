@@ -14,8 +14,9 @@ class MealAnalyzeRequest(BaseModel):
     user_caption: Optional[str] = Field(
         default=None, description="User optional text description/caption."
     )
-    meal_type: str = Field(
-        default="lunch", description="Meal type: breakfast, lunch, dinner, snack"
+    meal_type: Optional[str] = Field(
+        default=None,
+        description="Optional meal type override: breakfast, lunch, dinner, snack",
     )
 
 
@@ -39,6 +40,14 @@ class MealAnalysisResponse(BaseModel):
     """Complete response payload for food vision analysis endpoint."""
 
     detected_items: List[AnalyzedItemResponse]
+    meal_type: str = Field(
+        default="snack",
+        description="Detected or time-inferred meal category: breakfast, lunch, dinner, snack.",
+    )
+    meal_type_source: str = Field(
+        default="time_inferred",
+        description="Source of meal category: 'caption_explicit' or 'time_inferred'.",
+    )
     total_calories: float
     total_protein_g: float
     total_carbs_g: float
@@ -67,8 +76,9 @@ class ConfirmedItemCreate(BaseModel):
 class MealConfirmRequest(BaseModel):
     """Request payload for committing analyzed/edited meal to database."""
 
-    meal_type: str = Field(
-        default="lunch", description="Meal type: breakfast, lunch, dinner, snack"
+    meal_type: Optional[str] = Field(
+        default=None,
+        description="Meal type: breakfast, lunch, dinner, snack (auto-inferred if omitted)",
     )
     user_caption: Optional[str] = None
     image_url: Optional[str] = None

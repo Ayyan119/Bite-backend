@@ -232,7 +232,9 @@ async def test_full_phase_4_e2e_user_journey():
             assert len(dash_data["meals"]) == 1
 
         # Step 6: Chatbot Real-Time SSE Stream (POST /api/v1/chat)
-        async def mock_stream_gen(user_input: str, user_id: str, thread_id: str):
+        async def mock_stream_gen(
+            user_input: str, user_id: str, thread_id: str, *args, **kwargs
+        ):
             yield 'event: status\ndata: {"status": "processing", "message": "Analyzing..."}\n\n'
             yield 'event: message\ndata: {"content": "Logged 1 Avocado Toast (250 kcal)!"}\n\n'
 

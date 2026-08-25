@@ -1,5 +1,7 @@
 import base64
+from datetime import datetime
 import os
+import zoneinfo
 import dotenv
 
 dotenv.load_dotenv()
@@ -76,3 +78,16 @@ def validate_image_input(
         return clean_url
 
     raise ValueError("Invalid image input provided.")
+
+
+PK_TZ = zoneinfo.ZoneInfo("Asia/Karachi")
+
+
+def get_pakistan_now() -> datetime:
+    """Returns current datetime in Pakistan Time Zone (Asia/Karachi, PKT / UTC+5)."""
+    return datetime.now(PK_TZ)
+
+
+def get_local_now(client_tz_name: str | None = None) -> datetime:
+    """Returns current datetime in Pakistan Time Zone (Asia/Karachi)."""
+    return get_pakistan_now()

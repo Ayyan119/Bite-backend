@@ -166,3 +166,106 @@ async def test_generate_dev_token_endpoint():
         assert "access_token" in data
         assert data["token_type"] == "bearer"
         assert data["email"] == "tester@example.com"
+
+
+@pytest.mark.asyncio
+async def test_login_endpoint():
+    """Verify POST /api/v1/auth/login authenticates dummy user with email and password."""
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://testserver"
+    ) as client:
+        response = await client.post(
+            "/api/v1/auth/login",
+            json={"email": "alex.morgan@bite.app", "password": "bite12345"},
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert "access_token" in data
+        assert data["token_type"] == "bearer"
+        assert data["email"] == "alex.morgan@bite.app"
+        assert "display_name" in data
+        assert isinstance(data["display_name"], str)
+        assert isinstance(data["age"], (int, type(None)))
+        assert isinstance(data["height_cm"], (float, int, type(None)))
+        assert isinstance(data["weight_kg"], (float, int, type(None)))
+
+
+@pytest.mark.asyncio
+async def test_register_endpoint():
+    """Verify POST /api/v1/auth/register creates user account and returns token."""
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://testserver"
+    ) as client:
+        response = await client.post(
+            "/api/v1/auth/register",
+            json={
+                "email": "new_runner@bite.app",
+                "password": "bite12345",
+                "display_name": "New Runner",
+                "age": 30,
+                "height_cm": 182.0,
+                "weight_kg": 76.0,
+            },
+        )
+        assert response.status_code == 201
+        data = response.json()
+        assert "access_token" in data
+        assert data["token_type"] == "bearer"
+        assert data["email"] == "new_runner@bite.app"
+        assert data["display_name"] == "New Runner"
+        assert data["age"] == 30
+
+
+@pytest.mark.asyncio
+async def test_register_endpoint_minimal_optional_traits():
+    """Verify POST /api/v1/auth/register succeeds with only email & password without forcing body traits."""
+    rand_email = f"user_{uuid4().hex[:8]}@example.com"
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://testserver"
+    ) as client:
+        response = await client.post(
+            "/api/v1/auth/register",
+            json={
+                "email": rand_email,
+                "password": "secure_password_123",
+            },
+        )
+        assert response.status_code == 201
+        data = response.json()
+        assert "access_token" in data
+        assert data["email"] == rand_email
+        assert data["age"] is None
+        assert data["height_cm"] is None
+        assert data["weight_kg"] is None
+        assert data["bmr"] is None
+        assert data["tdee"] is None
+        assert data["target_calories"] is None
+
+
+@pytest.mark.asyncio
+async def test_register_endpoint_calculates_bmr_tdee():
+    """Verify POST /api/v1/auth/register calculates BMR, TDEE, and targets when traits are provided."""
+    rand_email = f"athlete_{uuid4().hex[:8]}@example.com"
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://testserver"
+    ) as client:
+        response = await client.post(
+            "/api/v1/auth/register",
+            json={
+                "email": rand_email,
+                "password": "secure_password_123",
+                "display_name": "Athlete",
+                "height_cm": 180.0,
+                "weight_kg": 80.0,
+                "age": 25,
+                "gender": "male",
+                "activity_level": "moderate",
+                "primary_goal": "muscle_gain",
+            },
+        )
+        assert response.status_code == 201
+        data = response.json()
+        assert data["bmr"] is not None
+        assert data["tdee"] is not None
+        assert data["target_calories"] is not None
+        assert data["target_calories"] > 2000.0

@@ -2,7 +2,7 @@
 
 from datetime import datetime, timezone
 import json
-import uuid
+from uuid import uuid4
 import streamlit as st
 import plotly.graph_objects as go
 
@@ -51,21 +51,33 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+# Dummy User Constants for Persistent Memory Testing
+DUMMY_EMAIL = "user@example.com"
+DUMMY_PASSWORD = "Password123!"
+DUMMY_USER_ID = "b21b5663-c40d-51b7-8d60-c015e3de48e9"
+DUMMY_NAME = "Dummy User"
+
 # Initialize Session State
 if "api_url" not in st.session_state:
     st.session_state["api_url"] = "http://localhost:8000"
 if "auth_token" not in st.session_state:
     st.session_state["auth_token"] = ""
 if "user_id" not in st.session_state:
-    st.session_state["user_id"] = str(uuid.uuid4())
+    st.session_state["user_id"] = DUMMY_USER_ID
 if "user_email" not in st.session_state:
-    st.session_state["user_email"] = "developer@example.com"
+    st.session_state["user_email"] = DUMMY_EMAIL
+if "user_name" not in st.session_state:
+    st.session_state["user_name"] = DUMMY_NAME
+if "user_stats" not in st.session_state:
+    st.session_state["user_stats"] = {"age": 28, "height_cm": 178.0, "weight_kg": 75.0}
 if "chat_history" not in st.session_state:
     st.session_state["chat_history"] = []
 if "conversation_id" not in st.session_state:
-    st.session_state["conversation_id"] = str(uuid.uuid4())
+    st.session_state["conversation_id"] = str(uuid4())
 if "analyzed_meal_data" not in st.session_state:
     st.session_state["analyzed_meal_data"] = None
+if "pending_chat_prompt" not in st.session_state:
+    st.session_state["pending_chat_prompt"] = ""
 
 # Initialize API Client
 client = BiteAPIClient(
@@ -99,34 +111,147 @@ with st.sidebar:
     st.divider()
     st.subheader("🔐 User Authentication")
 
-    with st.expander(
-        "🔑 Generate Dev Token", expanded=not bool(st.session_state["auth_token"])
-    ):
-        email_in = st.text_input("Email", value=st.session_state["user_email"])
-        user_id_in = st.text_input("User UUID", value=st.session_state["user_id"])
+    # Dummy Credentials Info Callout
+    st.info(
+        f"**👤 Default Dummy User**:\n\n"
+        f"• **Email**: `{DUMMY_EMAIL}`\n"
+        f"• **Password**: `{DUMMY_PASSWORD}`\n"
+        f"• **Stats**: Alex Morgan, 28 yrs, 178 cm, 75 kg\n"
+        f"• **Goal**: Muscle Gain (2,400 kcal)"
+    )
 
+    if not st.session_state["auth_token"]:
+        # Quick 1-Click Login Button
         if st.button(
-            "Generate & Authenticate", use_container_width=True, type="primary"
+            "⚡ 1-Click Login (Alex Morgan)", type="primary", use_container_width=True
         ):
             try:
-                token_resp = client.generate_dev_token(
-                    email=email_in, user_id=user_id_in
+                auth_resp = client.login(email=DUMMY_EMAIL, password=DUMMY_PASSWORD)
+                st.session_state["auth_token"] = auth_resp["access_token"]
+                st.session_state["user_email"] = auth_resp.get("email", DUMMY_EMAIL)
+                st.session_state["user_id"] = str(
+                    auth_resp.get("user_id", DUMMY_USER_ID)
                 )
-                st.session_state["auth_token"] = token_resp["access_token"]
-                st.session_state["user_email"] = token_resp.get("email", email_in)
-                st.session_state["user_id"] = str(token_resp.get("user_id", user_id_in))
-                st.success("Authenticated successfully!")
+                st.session_state["user_name"] = auth_resp.get(
+                    "display_name", DUMMY_NAME
+                )
+                st.session_state["user_stats"] = {
+                    "age": auth_resp.get("age", 28),
+                    "height_cm": auth_resp.get("height_cm", 178.0),
+                    "weight_kg": auth_resp.get("weight_kg", 75.0),
+                }
+                st.session_state["conversation_id"] = str(uuid4())
+                st.session_state["chat_history"] = []
+                st.success("Logged in successfully as Alex Morgan!")
                 st.rerun()
             except Exception as err:
-                st.error(f"Token generation failed: {err}")
+                st.error(f"Login failed: {err}")
 
-    if st.session_state["auth_token"]:
-        st.success(f"👤 Logged in as: {st.session_state['user_email']}")
-        if st.button("Logout", use_container_width=True):
-            st.session_state["auth_token"] = ""
-            st.rerun()
+        with st.expander("🔑 Login with Existing Account", expanded=False):
+            email_in = st.text_input("Email", value=st.session_state["user_email"])
+            pass_in = st.text_input("Password", value="bite12345", type="password")
+
+            if st.button("Sign In", use_container_width=True):
+                try:
+                    auth_resp = client.login(email=email_in, password=pass_in)
+                    st.session_state["auth_token"] = auth_resp["access_token"]
+                    st.session_state["user_email"] = auth_resp.get("email", email_in)
+                    st.session_state["user_id"] = str(auth_resp.get("user_id", ""))
+                    st.session_state["user_name"] = auth_resp.get(
+                        "display_name", "User"
+                    )
+                    st.session_state["user_stats"] = {
+                        "age": auth_resp.get("age"),
+                        "height_cm": auth_resp.get("height_cm"),
+                        "weight_kg": auth_resp.get("weight_kg"),
+                    }
+                    st.session_state["conversation_id"] = str(uuid4())
+                    st.session_state["chat_history"] = []
+                    st.success("Authenticated successfully!")
+                    st.rerun()
+                except Exception as err:
+                    st.error(f"Authentication failed: {err}")
+
+        with st.expander("📝 Register New Account", expanded=False):
+            reg_email = st.text_input("New Email", key="reg_email")
+            reg_pass = st.text_input("New Password", type="password", key="reg_pass")
+            reg_name = st.text_input("Display Name (Optional)", key="reg_name")
+            st.caption("Optional Body Stats (Skip if you prefer):")
+            reg_age = st.number_input(
+                "Age (Optional)", min_value=0, max_value=120, value=0, key="reg_age"
+            )
+            reg_height = st.number_input(
+                "Height cm (Optional)",
+                min_value=0.0,
+                max_value=250.0,
+                value=0.0,
+                key="reg_height",
+            )
+            reg_weight = st.number_input(
+                "Weight kg (Optional)",
+                min_value=0.0,
+                max_value=300.0,
+                value=0.0,
+                key="reg_weight",
+            )
+
+            if st.button("Create Account", use_container_width=True):
+                if not reg_email or not reg_pass:
+                    st.error("Email and password are required.")
+                else:
+                    payload = {"email": reg_email, "password": reg_pass}
+                    if reg_name.strip():
+                        payload["display_name"] = reg_name.strip()
+                    if reg_age > 0:
+                        payload["age"] = reg_age
+                    if reg_height > 0:
+                        payload["height_cm"] = reg_height
+                    if reg_weight > 0:
+                        payload["weight_kg"] = reg_weight
+
+                    try:
+                        auth_resp = client.register(payload)
+                        st.session_state["auth_token"] = auth_resp["access_token"]
+                        st.session_state["user_email"] = auth_resp.get(
+                            "email", reg_email
+                        )
+                        st.session_state["user_id"] = str(auth_resp.get("user_id", ""))
+                        st.session_state["user_name"] = auth_resp.get(
+                            "display_name", "User"
+                        )
+                        st.session_state["user_stats"] = {
+                            "age": auth_resp.get("age"),
+                            "height_cm": auth_resp.get("height_cm"),
+                            "weight_kg": auth_resp.get("weight_kg"),
+                        }
+                        st.success("Registered & Logged in successfully!")
+                        st.rerun()
+                    except Exception as err:
+                        st.error(f"Registration failed: {err}")
     else:
-        st.warning("Please generate a dev token to test authenticated APIs.")
+        st.success(
+            f"👤 **Logged in as:** {st.session_state.get('user_name', 'Alex Morgan')}"
+        )
+        st.caption(f"📧 `{st.session_state['user_email']}`")
+        stats = st.session_state.get("user_stats", {})
+        if stats:
+            age_s = f"{stats.get('age')} yrs" if stats.get("age") else "Age: Unset"
+            h_s = (
+                f"{stats.get('height_cm')} cm"
+                if stats.get("height_cm")
+                else "Height: Unset"
+            )
+            w_s = (
+                f"{stats.get('weight_kg')} kg"
+                if stats.get("weight_kg")
+                else "Weight: Unset"
+            )
+            st.caption(f"📏 {age_s} | {h_s} | {w_s}")
+
+        if st.button("🚪 Logout", use_container_width=True):
+            st.session_state["auth_token"] = ""
+            st.session_state["chat_history"] = []
+            st.rerun()
 
 
 # --- MAIN HEADER ---
@@ -154,18 +279,12 @@ tab_dashboard, tab_meal_vision, tab_chat, tab_profile = st.tabs(
 # TAB 1: DAILY DASHBOARD
 # ==========================================
 with tab_dashboard:
-    col_date, col_refresh = st.columns([3, 1])
-    with col_date:
-        selected_date = st.date_input(
-            "Select Target Date", value=datetime.now(timezone.utc).date()
-        )
+    col_title, col_refresh = st.columns([3, 1])
+    with col_title:
+        st.subheader("📅 Today's Live Dashboard & Food Journal")
     with col_refresh:
-        st.write("")
-        st.write("")
         if st.button("🔄 Refresh Dashboard", use_container_width=True):
             st.rerun()
-
-    date_str = selected_date.strftime("%Y-%m-%d")
 
     if not st.session_state["auth_token"]:
         st.warning(
@@ -173,7 +292,8 @@ with tab_dashboard:
         )
     else:
         try:
-            dashboard_data = client.get_daily_dashboard(target_date=date_str)
+            dashboard_data = client.get_daily_dashboard()
+            date_str = dashboard_data.get("date", "")
 
             # Key Macro Metrics
             m_col1, m_col2, m_col3, m_col4 = st.columns(4)
@@ -287,7 +407,22 @@ with tab_dashboard:
                             caption = (
                                 meal.get("user_caption") or "No description provided"
                             )
-                            logged_at = meal.get("logged_at", "")
+                            logged_at_raw = meal.get("logged_at", "")
+                            if logged_at_raw:
+                                try:
+                                    if isinstance(logged_at_raw, str):
+                                        dt_obj = datetime.fromisoformat(
+                                            logged_at_raw.replace("Z", "+00:00")
+                                        )
+                                    else:
+                                        dt_obj = logged_at_raw
+                                    logged_at_fmt = dt_obj.astimezone().strftime(
+                                        "%I:%M %p, %b %d, %Y"
+                                    )
+                                except Exception:
+                                    logged_at_fmt = str(logged_at_raw)
+                            else:
+                                logged_at_fmt = ""
 
                             st.markdown(f"### {m_type} - {caption}")
                             st.write(
@@ -296,8 +431,51 @@ with tab_dashboard:
                                 f"🍞 Carbs: **{meal.get('carbs_g', 0)}g** | "
                                 f"🥑 Fat: **{meal.get('fat_g', 0)}g**"
                             )
-                            st.caption(f"Logged at: {logged_at}")
+                            if logged_at_fmt:
+                                st.caption(f"Logged at: {logged_at_fmt}")
                         st.divider()
+
+            with st.expander(
+                "📈 Historical Days Analytics & Target Completions", expanded=False
+            ):
+                try:
+                    hist_data = client.get_historical_analytics(days=30)
+                    h_list = hist_data.get("history", [])
+                    if not h_list:
+                        st.info(
+                            "No past days history recorded yet. Log meals across multiple days to view past trends!"
+                        )
+                    else:
+                        st.write(f"Showing **{len(h_list)}** logged past days:")
+                        table_data = []
+                        for h in h_list:
+                            status_badge = (
+                                "🟢 Met"
+                                if h.get("goal_status") == "met"
+                                else (
+                                    "🔴 Exceeded"
+                                    if h.get("goal_status") == "exceeded"
+                                    else (
+                                        "🟡 Under Target"
+                                        if h.get("goal_status") == "under"
+                                        else "✅ Completed"
+                                    )
+                                )
+                            )
+                            table_data.append(
+                                {
+                                    "Date": h.get("date"),
+                                    "Meals Logged": h.get("meal_count"),
+                                    "Calories": f"{h.get('total_calories')} / {h.get('target_calories') or 'N/A'} kcal",
+                                    "Protein": f"{h.get('total_protein_g')} / {h.get('target_protein_g') or 'N/A'} g",
+                                    "Carbs": f"{h.get('total_carbs_g')} / {h.get('target_carbs_g') or 'N/A'} g",
+                                    "Fat": f"{h.get('total_fat_g')} / {h.get('target_fat_g') or 'N/A'} g",
+                                    "Target Status": status_badge,
+                                }
+                            )
+                        st.dataframe(table_data, use_container_width=True)
+                except Exception as err:
+                    st.warning(f"Could not load historical analytics: {err}")
 
         except Exception as e:
             st.error(f"Failed to fetch daily dashboard: {e}")
@@ -308,20 +486,16 @@ with tab_dashboard:
 # ==========================================
 with tab_meal_vision:
     st.subheader("📸 Upload Meal Photo or Enter Image URL")
+    st.caption(
+        "Meal category is automatically inferred from your caption or the current time of day—no manual selection required!"
+    )
 
-    col_input_type, col_meal_type = st.columns([2, 1])
-    with col_input_type:
-        input_mode = st.radio(
-            "Image Source", ["File Upload", "Image URL"], horizontal=True
-        )
-    with col_meal_type:
-        meal_type_val = st.selectbox(
-            "Meal Category", ["breakfast", "lunch", "dinner", "snack"], index=1
-        )
+    input_mode = st.radio("Image Source", ["File Upload", "Image URL"], horizontal=True)
 
     user_caption_val = st.text_input(
         "Meal Description / User Caption (Optional)",
-        placeholder="e.g. Grilled salmon salad with olive oil and avocado",
+        placeholder="e.g. 'Morning eggs and toast' or 'Grilled salmon with brown rice'",
+        help="If you mention a meal category (e.g. breakfast, lunch, dinner, snack), it will be used. Otherwise, the AI will guess the category based on current time.",
     )
 
     image_bytes_upload = None
@@ -358,13 +532,12 @@ with tab_meal_vision:
                         image_bytes=image_bytes_upload,
                         image_url=image_url_upload,
                         user_caption=user_caption_val,
-                        meal_type=meal_type_val,
                     )
                     st.session_state["analyzed_meal_data"] = {
                         "analysis": analysis_res,
                         "image_url": image_url_upload,
                         "user_caption": user_caption_val,
-                        "meal_type": meal_type_val,
+                        "meal_type": analysis_res.get("meal_type", "lunch"),
                     }
                     st.success("Meal analysis completed successfully!")
                 except Exception as err:
@@ -377,6 +550,22 @@ with tab_meal_vision:
 
         st.divider()
         st.subheader("📋 Analyzed Food Items & Nutrition Breakdown")
+
+        inferred_cat = res.get("meal_type", "lunch")
+        cat_src = res.get("meal_type_source", "time_inferred")
+        src_label = (
+            "Extracted from your caption"
+            if cat_src == "caption_explicit"
+            else "Auto-inferred from current time & foods"
+        )
+        st.info(
+            f"🏷️ **Auto-Inferred Meal Category:** `{inferred_cat.upper()}` *({src_label})*"
+        )
+
+        live_now = datetime.now().astimezone()
+        st.caption(
+            f"🕒 **Exact Logging Timestamp:** `{live_now.strftime('%A, %B %d, %Y at %I:%M:%S %p (%Z)')}`"
+        )
 
         conf = res.get("confidence_score", 1.0)
         st.progress(
@@ -415,12 +604,12 @@ with tab_meal_vision:
                     try:
                         confirm_res = client.confirm_meal(
                             items=items,
-                            meal_type=stored["meal_type"],
+                            meal_type=stored.get("meal_type") or inferred_cat,
                             user_caption=stored["user_caption"],
                             image_url=stored["image_url"],
                         )
                         st.success(
-                            f"Meal logged successfully! Meal ID: {confirm_res.get('meal_id')}"
+                            f"Meal logged successfully as '{inferred_cat.upper()}'! Meal ID: {confirm_res.get('meal_id')}"
                         )
                         st.session_state["analyzed_meal_data"] = None
                     except Exception as err:
@@ -437,37 +626,129 @@ with tab_meal_vision:
 with tab_chat:
     st.subheader("💬 AI Nutritionist Chat Assistant")
     st.caption(
-        "Ask questions about your diet, request meal suggestions, or get personalized fitness advice."
+        "Ask questions about your diet, review meals eaten today, inspect personal stats & goals, update your physical metrics, or get personalized fitness advice."
     )
 
-    col_clear, _ = st.columns([1, 4])
-    with col_clear:
-        if st.button("🧹 Clear Chat History"):
-            st.session_state["chat_history"] = []
-            st.session_state["conversation_id"] = str(uuid.uuid4())
-            st.rerun()
+    if st.session_state["auth_token"]:
+        # Session Management UI
+        sess_col1, sess_col2, sess_col3 = st.columns([3, 1, 1])
+        try:
+            sessions = client.list_chat_sessions()
+        except Exception:
+            sessions = []
+
+        session_map = {
+            s["id"]: f"💬 {s['title']} ({s['message_count']} msgs)" for s in sessions
+        }
+        session_map["new"] = "➕ Start New Chat Session"
+
+        current_sess = st.session_state.get("active_session_id")
+        if not current_sess and sessions:
+            current_sess = sessions[0]["id"]
+            st.session_state["active_session_id"] = current_sess
+            st.session_state["conversation_id"] = current_sess
+            try:
+                msgs = client.get_session_messages(current_sess)
+                st.session_state["chat_history"] = [
+                    {"role": m["role"], "content": m["content"]} for m in msgs
+                ]
+            except Exception:
+                pass
+
+        selected_id = sess_col1.selectbox(
+            "Select Chat Session",
+            options=list(session_map.keys()),
+            format_func=lambda x: session_map.get(x, x),
+            key="session_select_box",
+        )
+
+        if selected_id == "new":
+            if sess_col2.button("✨ New Session", use_container_width=True):
+                try:
+                    new_sess = client.create_chat_session("New Chat")
+                    st.session_state["active_session_id"] = new_sess["id"]
+                    st.session_state["conversation_id"] = new_sess["id"]
+                    st.session_state["chat_history"] = []
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Failed to create session: {e}")
+        else:
+            if selected_id != st.session_state.get("active_session_id"):
+                st.session_state["active_session_id"] = selected_id
+                st.session_state["conversation_id"] = selected_id
+                try:
+                    msgs = client.get_session_messages(selected_id)
+                    st.session_state["chat_history"] = [
+                        {"role": m["role"], "content": m["content"]} for m in msgs
+                    ]
+                except Exception:
+                    st.session_state["chat_history"] = []
+                st.rerun()
+
+            if sess_col3.button("🗑️ Delete Chat", use_container_width=True):
+                try:
+                    client.delete_chat_session(selected_id)
+                    st.session_state["active_session_id"] = None
+                    st.session_state["chat_history"] = []
+                    st.success("Session deleted successfully.")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Failed to delete session: {e}")
+
+    st.divider()
+
+    # Quick Suggestion Buttons
+    st.markdown("**💡 Quick Test Prompts:**")
+    q_col1, q_col2, q_col3, q_col4 = st.columns(4)
+    with q_col1:
+        if st.button("🥗 What did I eat today?", use_container_width=True):
+            st.session_state["pending_chat_prompt"] = (
+                "tell me what i eat today list all things ok"
+            )
+    with q_col2:
+        if st.button("⚖️ Update weight & goal", use_container_width=True):
+            st.session_state["pending_chat_prompt"] = (
+                "I want to increase my weight, my current weight is 78kg and height is 180cm"
+            )
+    with q_col3:
+        if st.button("🎯 Check my daily macros", use_container_width=True):
+            st.session_state["pending_chat_prompt"] = (
+                "How are my daily calories and protein looking today compared to my targets?"
+            )
+    with q_col4:
+        if st.button("🥩 High-protein meal idea", use_container_width=True):
+            st.session_state["pending_chat_prompt"] = (
+                "Suggest a high-protein dinner recipe based on my goals and dietary preferences."
+            )
 
     # Render Chat History
     for msg in st.session_state["chat_history"]:
         with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
 
-    user_input = st.chat_input(
-        "Type your message here (e.g., 'What can I eat for high-protein dinner?')"
+    typed_input = st.chat_input(
+        "Type your message here (e.g., 'Tell me what I ate today' or 'What is my name and age?')"
     )
 
-    if user_input:
+    active_prompt = None
+    if typed_input:
+        active_prompt = typed_input
+    elif st.session_state.get("pending_chat_prompt"):
+        active_prompt = st.session_state["pending_chat_prompt"]
+        st.session_state["pending_chat_prompt"] = ""
+
+    if active_prompt:
         if not st.session_state["auth_token"]:
             st.error("Please authenticate via sidebar before starting chat.")
         else:
             # Append User Message to session state
             st.session_state["chat_history"].append(
-                {"role": "user", "content": user_input}
+                {"role": "user", "content": active_prompt}
             )
 
             # Display user message immediately
             with st.chat_message("user"):
-                st.markdown(user_input)
+                st.markdown(active_prompt)
 
             # Stream Assistant Response via SSE
             with st.chat_message("assistant"):
@@ -477,7 +758,7 @@ with tab_chat:
 
                 try:
                     for chunk in client.stream_chat(
-                        message=user_input,
+                        message=active_prompt,
                         conversation_id=st.session_state["conversation_id"],
                     ):
                         event_type = chunk.get("event")
@@ -642,15 +923,29 @@ with tab_profile:
                     }
                     try:
                         updated_resp = client.update_profile(update_payload)
+                        st.session_state["user_name"] = updated_resp.get(
+                            "display_name", disp_name
+                        )
+                        st.session_state["user_stats"] = {
+                            "age": updated_resp.get("age", age_val),
+                            "height_cm": updated_resp.get("height_cm", height_cm),
+                            "weight_kg": updated_resp.get("weight_kg", weight_kg),
+                        }
                         st.success("Profile successfully updated!")
                         st.rerun()
                     except Exception as err:
                         st.error(f"Failed to update profile: {err}")
 
             # Calculated BMR / TDEE information
-            if profile.get("bmr") and profile.get("tdee"):
+            bmr_val = profile.get("bmr")
+            tdee_val = profile.get("tdee")
+            if bmr_val and tdee_val:
                 st.info(
-                    f"💡 Calculated BMR (Basal Metabolic Rate): **{profile['bmr']} kcal/day** | TDEE (Total Daily Energy Expenditure): **{profile['tdee']} kcal/day**"
+                    f"💡 **Calculated BMR (Basal Metabolic Rate):** `{bmr_val} kcal/day` | **TDEE (Total Daily Energy Expenditure):** `{tdee_val} kcal/day`"
+                )
+            else:
+                st.info(
+                    "💡 **Body stats (height, weight, age, gender) are optional.** Fill them in anytime or ask the AI Nutritionist in chat to update them for you!"
                 )
 
         except Exception as e:

@@ -88,10 +88,10 @@ async def get_profile(
                             if current_user.email
                             else "User"
                         ),
-                        target_calories=2000.0,
-                        target_protein_g=150.0,
-                        target_carbs_g=200.0,
-                        target_fat_g=65.0,
+                        target_calories=None,
+                        target_protein_g=None,
+                        target_carbs_g=None,
+                        target_fat_g=None,
                         target_micronutrients={},
                     )
 
@@ -125,14 +125,14 @@ async def get_profile(
                     weight_kg=float(w_kg) if w_kg is not None else None,
                     age=int(u_age) if u_age is not None else None,
                     gender=gdr,
-                    activity_level=act or "moderate",
-                    primary_goal=goal or "maintenance",
+                    activity_level=act,
+                    primary_goal=goal,
                     bmr=float(bmr) if bmr is not None else None,
                     tdee=float(tdee) if tdee is not None else None,
-                    target_calories=float(cal or 2000.0),
-                    target_protein_g=float(prot or 150.0),
-                    target_carbs_g=float(carb or 200.0),
-                    target_fat_g=float(fat or 65.0),
+                    target_calories=float(cal) if cal is not None else None,
+                    target_protein_g=float(prot) if prot is not None else None,
+                    target_carbs_g=float(carb) if carb is not None else None,
+                    target_fat_g=float(fat) if fat is not None else None,
                     target_micronutrients=micro_dict,
                 )
     except HTTPException as http_err:
@@ -145,10 +145,10 @@ async def get_profile(
                 display_name=(
                     current_user.email.split("@")[0] if current_user.email else "User"
                 ),
-                target_calories=2000.0,
-                target_protein_g=150.0,
-                target_carbs_g=200.0,
-                target_fat_g=65.0,
+                target_calories=None,
+                target_protein_g=None,
+                target_carbs_g=None,
+                target_fat_g=None,
                 target_micronutrients={},
             )
         raise
@@ -183,31 +183,36 @@ async def update_profile(
 
     # Determine calorie target based on TDEE and primary goal if not explicitly provided
     target_calories = payload.target_calories
-    if target_calories is None:
-        if tdee:
-            goal_clean = (payload.primary_goal or "maintenance").strip().lower()
-            if goal_clean == "weight_loss":
-                target_calories = round(tdee - 500.0, 2)
-            elif goal_clean == "muscle_gain":
-                target_calories = round(tdee + 300.0, 2)
-            else:
-                target_calories = round(tdee, 2)
+    if target_calories is None and tdee is not None:
+        goal_clean = (payload.primary_goal or "maintenance").strip().lower()
+        if goal_clean == "weight_loss":
+            target_calories = round(tdee - 500.0, 2)
+        elif goal_clean == "muscle_gain":
+            target_calories = round(tdee + 300.0, 2)
         else:
-            target_calories = 2000.0
+            target_calories = round(tdee, 2)
 
-    target_protein_g = payload.target_protein_g or 150.0
-    target_carbs_g = payload.target_carbs_g or 200.0
-    target_fat_g = payload.target_fat_g or 65.0
+    target_protein_g = payload.target_protein_g
+    target_carbs_g = payload.target_carbs_g
+    target_fat_g = payload.target_fat_g
+    if target_calories is not None:
+        if target_protein_g is None:
+            target_protein_g = round((target_calories * 0.30) / 4.0, 2)
+        if target_carbs_g is None:
+            target_carbs_g = round((target_calories * 0.40) / 4.0, 2)
+        if target_fat_g is None:
+            target_fat_g = round((target_calories * 0.30) / 9.0, 2)
+
     target_micro = payload.target_micronutrients or {}
 
     upsert_sql = """
     INSERT INTO public.profiles (
-        id, display_name, height_cm, weight_kg, age, gender,
+        id, email, display_name, height_cm, weight_kg, age, gender,
         activity_level, primary_goal, bmr, tdee,
         target_calories, target_protein_g, target_carbs_g, target_fat_g,
         target_micronutrients, updated_at
     )
-    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, NOW())
+    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, NOW())
     ON CONFLICT (id) DO UPDATE SET
         display_name = COALESCE(EXCLUDED.display_name, public.profiles.display_name),
         height_cm = COALESCE(EXCLUDED.height_cm, public.profiles.height_cm),
@@ -234,6 +239,7 @@ async def update_profile(
                     upsert_sql,
                     (
                         user_id_str,
+                        current_user.email or "developer@example.com",
                         payload.display_name,
                         payload.height_cm,
                         payload.weight_kg,
@@ -287,14 +293,14 @@ async def update_profile(
                     weight_kg=float(w_kg) if w_kg is not None else None,
                     age=int(u_age) if u_age is not None else None,
                     gender=gdr,
-                    activity_level=act or "moderate",
-                    primary_goal=goal or "maintenance",
+                    activity_level=act,
+                    primary_goal=goal,
                     bmr=float(bmr_val) if bmr_val is not None else None,
                     tdee=float(tdee_val) if tdee_val is not None else None,
-                    target_calories=float(cal or 2000.0),
-                    target_protein_g=float(prot or 150.0),
-                    target_carbs_g=float(carb or 200.0),
-                    target_fat_g=float(fat or 65.0),
+                    target_calories=float(cal) if cal is not None else None,
+                    target_protein_g=float(prot) if prot is not None else None,
+                    target_carbs_g=float(carb) if carb is not None else None,
+                    target_fat_g=float(fat) if fat is not None else None,
                     target_micronutrients=micro_dict,
                 )
     except HTTPException as http_err:
@@ -310,14 +316,20 @@ async def update_profile(
                 weight_kg=payload.weight_kg,
                 age=payload.age,
                 gender=payload.gender,
-                activity_level=payload.activity_level or "moderate",
-                primary_goal=payload.primary_goal or "maintenance",
+                activity_level=payload.activity_level,
+                primary_goal=payload.primary_goal,
                 bmr=bmr,
                 tdee=tdee,
-                target_calories=float(target_calories),
-                target_protein_g=float(target_protein_g),
-                target_carbs_g=float(target_carbs_g),
-                target_fat_g=float(target_fat_g),
+                target_calories=(
+                    float(target_calories) if target_calories is not None else None
+                ),
+                target_protein_g=(
+                    float(target_protein_g) if target_protein_g is not None else None
+                ),
+                target_carbs_g=(
+                    float(target_carbs_g) if target_carbs_g is not None else None
+                ),
+                target_fat_g=float(target_fat_g) if target_fat_g is not None else None,
                 target_micronutrients=target_micro,
             )
         raise

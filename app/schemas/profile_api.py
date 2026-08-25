@@ -56,12 +56,12 @@ class UserProfileResponse(BaseModel):
     weight_kg: Optional[float] = None
     age: Optional[int] = None
     gender: Optional[str] = None
-    activity_level: str = "moderate"
-    primary_goal: str = "maintenance"
+    activity_level: Optional[str] = None
+    primary_goal: Optional[str] = None
     bmr: Optional[float] = None
     tdee: Optional[float] = None
-    target_calories: float = 2000.0
-    target_protein_g: float = 150.0
-    target_carbs_g: float = 200.0
-    target_fat_g: float = 65.0
+    target_calories: Optional[float] = None
+    target_protein_g: Optional[float] = None
+    target_carbs_g: Optional[float] = None
+    target_fat_g: Optional[float] = None
     target_micronutrients: Dict[str, float] = Field(default_factory=dict)

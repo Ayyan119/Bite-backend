@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 import io
 import json
 import logging
+import re
 from typing import Optional
 from uuid import uuid4
 from PIL import Image
@@ -22,7 +23,7 @@ from fastapi import (
 from fastapi.responses import ORJSONResponse
 
 from app.api.deps import get_current_user
-from app.core.config import MAX_IMAGE_SIZE_BYTES, validate_image_input
+from app.core.config import MAX_IMAGE_SIZE_BYTES, get_local_now, validate_image_input
 from app.db.connection import get_db_connection
 from app.schemas.auth import CurrentUser
 from app.schemas.ingestion import IngestionState
@@ -34,6 +35,7 @@ from app.schemas.meal_api import (
     MealConfirmResponse,
 )
 from app.services.langgraph.graph import ingestion_graph
+from app.services.langgraph.vision_node import guess_meal_category_from_time_and_caption
 
 logger = logging.getLogger(__name__)
 
@@ -75,17 +77,19 @@ async def analyze_meal(
     file: Optional[UploadFile] = File(None),
     image_url: Optional[str] = Form(None),
     user_caption: Optional[str] = Form(None),
-    meal_type: Optional[str] = Form("lunch"),
+    meal_type: Optional[str] = Form(None),
     current_user: CurrentUser = Depends(get_current_user),
 ) -> MealAnalysisResponse:
     """Analyze a food image via LangGraph Workflow 1 (Vision Extraction & USDA Resolver).
 
     Supports multipart file upload or JSON payload with base64 data URI / image URL.
     Applies image compression guard (max 1024x1024) to reduce latency and bandwidth usage.
+    Auto-detects meal category from caption or current time if omitted by user.
     """
     final_image_bytes: Optional[bytes] = None
     final_image_url: Optional[str] = None
     final_caption: Optional[str] = user_caption
+    explicit_meal_type: Optional[str] = meal_type
 
     content_type = request.headers.get("content-type", "").lower()
 
@@ -94,6 +98,7 @@ async def analyze_meal(
             body = await request.json()
             json_req = MealAnalyzeRequest(**body)
             final_caption = json_req.user_caption or final_caption
+            explicit_meal_type = json_req.meal_type or explicit_meal_type
             if json_req.image_url:
                 if json_req.image_url.startswith("data:image"):
                     import base64
@@ -138,6 +143,7 @@ async def analyze_meal(
         "user_caption": final_caption,
         "detected_items": [],
         "vision_confidence": 1.0,
+        "detected_meal_type": None,
         "usda_matches": {},
         "reconciled_items": [],
         "total_calories": 0.0,
@@ -174,8 +180,37 @@ async def analyze_meal(
         for item in graph_result.get("reconciled_items", [])
     ]
 
+    caption_has_cue = bool(
+        final_caption
+        and any(
+            w in final_caption.lower()
+            for w in [
+                "breakfast",
+                "morning",
+                "lunch",
+                "noon",
+                "midday",
+                "dinner",
+                "evening",
+                "snack",
+            ]
+        )
+    )
+
+    inferred_meal_type = (
+        explicit_meal_type
+        or graph_result.get("detected_meal_type")
+        or guess_meal_category_from_time_and_caption(final_caption)
+    )
+
     return MealAnalysisResponse(
         detected_items=analyzed_items,
+        meal_type=inferred_meal_type,
+        meal_type_source=(
+            "caption_explicit"
+            if (explicit_meal_type or caption_has_cue)
+            else "time_inferred"
+        ),
         total_calories=graph_result.get("total_calories", 0.0),
         total_protein_g=graph_result.get("total_protein_g", 0.0),
         total_carbs_g=graph_result.get("total_carbs_g", 0.0),
@@ -184,6 +219,54 @@ async def analyze_meal(
         confidence_score=graph_result.get("vision_confidence", 1.0),
         warnings=graph_result.get("errors", []),
     )
+
+
+def parse_time_from_caption(caption: Optional[str], default_dt: datetime) -> datetime:
+    """Parses explicit time specification from caption (e.g., '8:30 AM', 'at 9pm', 'morning 8am').
+
+    Strictly ignores food quantities like '2 bananas' or '3 eggs'.
+    """
+    if not caption or not caption.strip():
+        return default_dt
+
+    text = caption.lower()
+    # Match patterns with explicit time context:
+    # 1) 'at 8:30', 'at 9pm', 'at 8'
+    # 2) '8:30 am', '9:15', '8am', '9 pm'
+    match = re.search(
+        r"(?:at\s+)?\b(\d{1,2}):(\d{2})\s*(am|pm)?\b|\b(\d{1,2})\s*(am|pm)\b|(?<=\bat\s)(\d{1,2})\b",
+        text,
+    )
+    if match:
+        try:
+            if match.group(1) is not None:
+                hour = int(match.group(1))
+                minute = int(match.group(2)) if match.group(2) else 0
+                meridiem = match.group(3)
+            elif match.group(4) is not None:
+                hour = int(match.group(4))
+                minute = 0
+                meridiem = match.group(5)
+            elif match.group(6) is not None:
+                hour = int(match.group(6))
+                minute = 0
+                meridiem = None
+            else:
+                return default_dt
+
+            if meridiem:
+                if meridiem == "pm" and hour < 12:
+                    hour += 12
+                elif meridiem == "am" and hour == 12:
+                    hour = 0
+            if 0 <= hour <= 23 and 0 <= minute <= 59:
+                return default_dt.replace(
+                    hour=hour, minute=minute, second=0, microsecond=0
+                )
+        except Exception:
+            pass
+
+    return default_dt
 
 
 @router.post(
@@ -207,6 +290,33 @@ async def confirm_meal(
             detail="Meal confirm request must contain at least one item.",
         )
 
+    # Fetch exact current upload time (Pakistan Time Zone)
+    from app.core.config import get_pakistan_now
+
+    now_local = get_pakistan_now()
+    log_time = now_local
+
+    caption_clean = (payload.user_caption or "").lower()
+    if "yesterday" in caption_clean:
+        yesterday_date = (now_local - timedelta(days=1)).date()
+        log_time = log_time.replace(
+            year=yesterday_date.year,
+            month=yesterday_date.month,
+            day=yesterday_date.day,
+        )
+
+    if log_time > now_local:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Cannot log a meal in the future. Selected meal time ({log_time.strftime('%I:%M %p')}) is after current time ({now_local.strftime('%I:%M %p')}).",
+        )
+    upload_time_str = log_time.strftime("%I:%M %p, %b %d, %Y")
+
+    if not payload.meal_type or not payload.meal_type.strip():
+        payload.meal_type = guess_meal_category_from_time_and_caption(
+            payload.user_caption, log_time
+        )
+
     # Auto-generate user caption and sanitize food names if not provided by user
     sanitized_items = []
     for item in payload.items:
@@ -215,20 +325,26 @@ async def confirm_meal(
         sanitized_items.append(item)
     payload.items = sanitized_items
 
-    user_caption_final = payload.user_caption
-    if not user_caption_final or not user_caption_final.strip():
+    user_caption_raw = (payload.user_caption or "").strip()
+    if user_caption_raw:
+        if "(Upload Time:" in user_caption_raw:
+            user_caption_final = user_caption_raw
+        else:
+            user_caption_final = f"{user_caption_raw} (Upload Time: {upload_time_str})"
+    else:
         item_names = [item.food_name for item in payload.items if item.food_name]
         if item_names:
             if len(item_names) == 1:
-                user_caption_final = f"{item_names[0]} Meal"
+                base_desc = f"{item_names[0]} Meal"
             elif len(item_names) == 2:
-                user_caption_final = f"{item_names[0]} & {item_names[1]}"
+                base_desc = f"{item_names[0]} & {item_names[1]}"
             else:
-                user_caption_final = (
+                base_desc = (
                     f"{item_names[0]}, {item_names[1]} & {len(item_names) - 2} items"
                 )
         else:
-            user_caption_final = f"{payload.meal_type.title()} Log"
+            base_desc = f"{payload.meal_type.title()} Log"
+        user_caption_final = f"{base_desc} (Upload Time: {upload_time_str})"
 
     payload.user_caption = user_caption_final
 
@@ -269,11 +385,11 @@ async def confirm_meal(
     cte_query = """
     WITH new_log AS (
         INSERT INTO public.meal_logs (
-            user_id, meal_type, image_url, user_caption,
+            user_id, logged_at, meal_type, image_url, user_caption,
             total_calories, total_protein_g, total_carbs_g, total_fat_g,
             aggregated_nutrients
         )
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb)
         RETURNING id, user_id, logged_at
     )
     INSERT INTO public.meal_items (
@@ -337,6 +453,7 @@ async def confirm_meal(
                     cte_query,
                     (
                         str(current_user.user_id),
+                        log_time,
                         payload.meal_type,
                         payload.image_url,
                         user_caption_final,
