@@ -39,27 +39,12 @@ def get_deterministic_user_id(email: str) -> UUID:
     response_class=ORJSONResponse,
 )
 async def login_user(payload: LoginRequest) -> AuthResponse:
-    """Authenticates a user with email & password and returns a signed Supabase Bearer JWT token.
-
-    Uses deterministic UUIDs derived from email to guarantee consistent identity and persistent
-    long-term memory and meal history across all user sessions.
-    """
+    """Authenticates an existing user with email & password and returns a signed Supabase Bearer JWT token."""
     clean_email = payload.email.strip().lower()
     target_user_id = get_deterministic_user_id(clean_email)
 
     now = int(time.time())
     expires_in = 86400  # 24 hours validity
-
-    jwt_payload = {
-        "sub": str(target_user_id),
-        "email": clean_email,
-        "role": "authenticated",
-        "iat": now,
-        "exp": now + expires_in,
-    }
-
-    secret = get_jwt_secret()
-    signed_jwt = jwt.encode(jwt_payload, secret, algorithm="HS256")
 
     display_name = clean_email.split("@")[0].replace(".", " ").title()
     age = None
@@ -85,67 +70,60 @@ async def login_user(payload: LoginRequest) -> AuthResponse:
                 )
                 existing = await cur.fetchone()
 
-                if existing:
-                    stored_pwd = existing.get("password_hash")
-                    if stored_pwd and payload.password:
-                        if not verify_password(payload.password, stored_pwd):
-                            raise HTTPException(
-                                status_code=status.HTTP_401_UNAUTHORIZED,
-                                detail="Incorrect password. Please check your credentials.",
-                            )
+                if not existing:
+                    raise HTTPException(
+                        status_code=status.HTTP_404_NOT_FOUND,
+                        detail="User account not found. Please sign up first.",
+                    )
 
-                    display_name = existing.get("display_name") or display_name
-                    age = existing.get("age")
-                    height_cm = (
-                        float(existing["height_cm"])
-                        if existing.get("height_cm") is not None
-                        else None
-                    )
-                    weight_kg = (
-                        float(existing["weight_kg"])
-                        if existing.get("weight_kg") is not None
-                        else None
-                    )
-                    gender = existing.get("gender")
-                    bmr = (
-                        float(existing["bmr"])
-                        if existing.get("bmr") is not None
-                        else None
-                    )
-                    tdee = (
-                        float(existing["tdee"])
-                        if existing.get("tdee") is not None
-                        else None
-                    )
-                    target_calories = (
-                        float(existing["target_calories"])
-                        if existing.get("target_calories") is not None
-                        else None
-                    )
-                else:
-                    # Create empty profile row for new login with unforced optional stats
-                    pwd_hash = (
-                        hash_password(payload.password) if payload.password else None
-                    )
-                    await cur.execute(
-                        """
-                        INSERT INTO public.profiles (
-                            id, email, display_name, password_hash
+                stored_pwd = existing.get("password_hash")
+                if stored_pwd and payload.password:
+                    if not verify_password(payload.password, stored_pwd):
+                        raise HTTPException(
+                            status_code=status.HTTP_401_UNAUTHORIZED,
+                            detail="Incorrect password. Please check your credentials.",
                         )
-                        VALUES (%s, %s, %s, %s)
-                        ON CONFLICT (id) DO NOTHING;
-                        """,
-                        (
-                            str(target_user_id),
-                            clean_email,
-                            display_name,
-                            pwd_hash,
-                        ),
-                    )
+
+                display_name = existing.get("display_name") or display_name
+                age = existing.get("age")
+                height_cm = (
+                    float(existing["height_cm"])
+                    if existing.get("height_cm") is not None
+                    else None
+                )
+                weight_kg = (
+                    float(existing["weight_kg"])
+                    if existing.get("weight_kg") is not None
+                    else None
+                )
+                gender = existing.get("gender")
+                bmr = (
+                    float(existing["bmr"]) if existing.get("bmr") is not None else None
+                )
+                tdee = (
+                    float(existing["tdee"])
+                    if existing.get("tdee") is not None
+                    else None
+                )
+                target_calories = (
+                    float(existing["target_calories"])
+                    if existing.get("target_calories") is not None
+                    else None
+                )
     except HTTPException:
         raise
     except Exception as err:
         logger.warning(f"Database error during login profile lookup: {err}")
+
+    secret = get_jwt_secret()
+    jwt_payload = {
+        "sub": str(target_user_id),
+        "email": clean_email,
+        "role": "authenticated",
+        "iat": now,
+        "exp": now + expires_in,
+    }
+    signed_jwt = jwt.encode(jwt_payload, secret, algorithm="HS256")
 
     return AuthResponse(
         access_token=signed_jwt,
@@ -180,16 +158,27 @@ async def register_user(payload: RegisterRequest) -> AuthResponse:
     now = int(time.time())
     expires_in = 86400
 
-    jwt_payload = {
-        "sub": str(target_user_id),
-        "email": clean_email,
-        "role": "authenticated",
-        "iat": now,
-        "exp": now + expires_in,
-    }
-
-    secret = get_jwt_secret()
-    signed_jwt = jwt.encode(jwt_payload, secret, algorithm="HS256")
+    # Reject registration if user already exists
+    try:
+        async with get_db_connection() as conn:
+            async with conn.cursor(row_factory=dict_row) as cur:
+                await cur.execute(
+                    """
+                    SELECT id FROM public.profiles
+                    WHERE id = %s OR email = %s;
+                    """,
+                    (str(target_user_id), clean_email),
+                )
+                existing = await cur.fetchone()
+                if existing:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="An account with this email address already exists. Please log in instead.",
+                    )
+    except HTTPException:
+        raise
+    except Exception as err:
+        logger.warning(f"Database error checking existing registration: {err}")
 
     disp_name = (
         payload.display_name or clean_email.split("@")[0].replace(".", " ").title()
@@ -235,23 +224,7 @@ async def register_user(payload: RegisterRequest) -> AuthResponse:
                         activity_level, primary_goal, bmr, tdee, target_calories,
                         target_protein_g, target_carbs_g, target_fat_g, password_hash, updated_at
                     )
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
-                    ON CONFLICT (id) DO UPDATE SET
-                        display_name = EXCLUDED.display_name,
-                        height_cm = COALESCE(EXCLUDED.height_cm, public.profiles.height_cm),
-                        weight_kg = COALESCE(EXCLUDED.weight_kg, public.profiles.weight_kg),
-                        age = COALESCE(EXCLUDED.age, public.profiles.age),
-                        gender = COALESCE(EXCLUDED.gender, public.profiles.gender),
-                        activity_level = COALESCE(EXCLUDED.activity_level, public.profiles.activity_level),
-                        primary_goal = COALESCE(EXCLUDED.primary_goal, public.profiles.primary_goal),
-                        bmr = COALESCE(EXCLUDED.bmr, public.profiles.bmr),
-                        tdee = COALESCE(EXCLUDED.tdee, public.profiles.tdee),
-                        target_calories = COALESCE(EXCLUDED.target_calories, public.profiles.target_calories),
-                        target_protein_g = COALESCE(EXCLUDED.target_protein_g, public.profiles.target_protein_g),
-                        target_carbs_g = COALESCE(EXCLUDED.target_carbs_g, public.profiles.target_carbs_g),
-                        target_fat_g = COALESCE(EXCLUDED.target_fat_g, public.profiles.target_fat_g),
-                        password_hash = COALESCE(EXCLUDED.password_hash, public.profiles.password_hash),
-                        updated_at = NOW();
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW());
                     """,
                     (
                         str(target_user_id),
@@ -273,7 +246,21 @@ async def register_user(payload: RegisterRequest) -> AuthResponse:
                     ),
                 )
     except Exception as err:
-        logger.warning(f"Database error during registration: {err}")
+        logger.exception(f"Database error during registration: {err}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to register user: {str(err)}",
+        )
+
+    secret = get_jwt_secret()
+    jwt_payload = {
+        "sub": str(target_user_id),
+        "email": clean_email,
+        "role": "authenticated",
+        "iat": now,
+        "exp": now + expires_in,
+    }
+    signed_jwt = jwt.encode(jwt_payload, secret, algorithm="HS256")
 
     return AuthResponse(
         access_token=signed_jwt,

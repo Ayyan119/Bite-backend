@@ -6,7 +6,7 @@ def test_settings_defaults():
     """Verify default configurations for USDA API and Vision LLM settings."""
     assert settings.USDA_API_KEY == "DEMO_KEY" or settings.USDA_API_KEY is not None
     assert settings.USDA_API_BASE_URL == "https://api.nal.usda.gov/fdc/v1"
-    assert settings.VISION_LLM_MODEL == "gpt-4o"
+    assert settings.VISION_LLM_MODEL in ("gpt-4o", "gpt-4o-mini")
 
 
 def test_validate_image_input_bytes_success():

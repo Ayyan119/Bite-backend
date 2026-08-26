@@ -73,6 +73,11 @@ async def save_message_to_db(
     """Persists an individual user or assistant message to public.chat_messages."""
     if not content or not content.strip():
         return
+    norm_role = str(role).strip().lower()
+    if norm_role in ("model", "bot", "ai", "assistant"):
+        norm_role = "assistant"
+    elif norm_role in ("user", "human"):
+        norm_role = "user"
     try:
         async with get_db_connection() as conn:
             async with conn.cursor() as cur:
@@ -81,7 +86,7 @@ async def save_message_to_db(
                     INSERT INTO public.chat_messages (id, session_id, user_id, role, content)
                     VALUES (gen_random_uuid(), %s, %s, %s, %s);
                     """,
-                    (session_id, user_id, role, content.strip()),
+                    (session_id, user_id, norm_role, content.strip()),
                 )
                 await cur.execute(
                     """
@@ -223,12 +228,18 @@ async def get_session_messages(
                 await cur.execute(query_sql, (session_id, user_id_str))
                 rows = await cur.fetchall()
                 for row in rows:
+                    role_val = str(row.get("role") or "user").strip().lower()
+                    if role_val in ("model", "bot", "ai", "assistant"):
+                        role_val = "assistant"
+                    elif role_val in ("user", "human"):
+                        role_val = "user"
+
                     messages.append(
                         ChatMessageResponse(
                             id=row["id"],
                             session_id=row["session_id"],
-                            role=row["role"],
-                            content=row["content"],
+                            role=role_val,
+                            content=row["content"] or "",
                             created_at=str(row["created_at"]),
                         )
                     )
@@ -313,7 +324,7 @@ async def chat_stream_endpoint(
             # Instant-flush initial SSE status event (<10ms TTFT)
             initial_status = {
                 "status": "processing_prompt",
-                "message": "Analyzing prompt and loading session memory...",
+                "message": "Thinking...",
             }
             yield f"event: status\ndata: {json.dumps(initial_status)}\n\n"
 
@@ -325,15 +336,30 @@ async def chat_stream_endpoint(
                 client_timezone=payload.client_timezone,
             ):
                 # Intercept message token data to accumulate for chat history persistence
-                if sse_chunk.startswith("event: message\ndata: "):
-                    try:
-                        data_part = sse_chunk[len("event: message\ndata: ") :].strip()
-                        parsed = json.loads(data_part)
-                        tok = parsed.get("token") or parsed.get("content") or ""
-                        if tok:
-                            accumulated_assistant_tokens.append(tok)
-                    except Exception:
-                        pass
+                for line in sse_chunk.splitlines():
+                    line_str = line.strip()
+                    if line_str.startswith("data:"):
+                        json_str = line_str[5:].strip()
+                        try:
+                            parsed = json.loads(json_str)
+                            if isinstance(parsed, dict):
+                                event_type = parsed.get("event_type")
+                                # Accumulate token chunks (ignore status events, errors, done events)
+                                if event_type == "token" or (
+                                    event_type is None
+                                    and ("content" in parsed or "token" in parsed)
+                                    and not parsed.get("tool_name")
+                                    and "status" not in parsed
+                                ):
+                                    tok = (
+                                        parsed.get("token")
+                                        or parsed.get("content")
+                                        or ""
+                                    )
+                                    if tok:
+                                        accumulated_assistant_tokens.append(str(tok))
+                        except Exception:
+                            pass
 
                 yield sse_chunk
 

@@ -126,3 +126,74 @@ async def test_chat_sessions_crud():
         )
         assert del_resp.status_code == 200
         assert del_resp.json()["status"] == "deleted"
+
+
+async def mock_stream_chatbot_generator_tokens(
+    user_input: str, user_id: str, thread_id: str, *args, **kwargs
+):
+    """Mock generator yielding simulated SSE event chunks with ChatStreamChunk token JSON format."""
+    yield 'data: {"event_type": "action_status", "content": "Searching...", "tool_name": "search_usda_food", "is_fallback": false}\n\n'
+    yield 'data: {"event_type": "token", "content": "Logged ", "role": "assistant", "tool_name": null, "is_fallback": false}\n\n'
+    yield 'data: {"event_type": "token", "content": "300g Cholay!", "role": "assistant", "tool_name": null, "is_fallback": false}\n\n'
+
+
+@pytest.mark.asyncio
+async def test_chat_ai_response_persisted_in_history():
+    """Verify that streaming tokens are correctly accumulated and persisted as assistant role in history DB."""
+    test_user_id = str(uuid4())
+    token = create_test_jwt(user_id=test_user_id)
+    headers = {"Authorization": f"Bearer {token}"}
+
+    conv_id = f"test-persisted-conv-{uuid4()}"
+    payload = {
+        "message": "I ate 300g cholay",
+        "conversation_id": conv_id,
+        "client_timezone": "UTC",
+    }
+
+    with patch(
+        "app.api.v1.endpoints.chat.stream_chatbot_response",
+        side_effect=mock_stream_chatbot_generator_tokens,
+    ):
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://testserver"
+        ) as client:
+            # 1. Stream chat response
+            stream_resp = await client.post(
+                "/api/v1/chat", json=payload, headers=headers
+            )
+            assert stream_resp.status_code == 200
+
+            # Consume the full stream content
+            _ = stream_resp.text
+
+            # 2. Fetch session messages history
+            # Normalize thread UUID to match endpoint behavior
+            from uuid import UUID, uuid5
+            import uuid
+
+            try:
+                session_uuid = str(UUID(conv_id.replace("thread_", "")))
+            except ValueError:
+                session_uuid = str(uuid5(uuid.NAMESPACE_DNS, conv_id))
+
+            msg_resp = await client.get(
+                f"/api/v1/chat/sessions/{session_uuid}/messages", headers=headers
+            )
+            assert msg_resp.status_code == 200
+            messages = msg_resp.json()
+
+            # Verify that both user prompt and assistant reply are saved with correct role and content fields
+            assert len(messages) >= 2
+            user_msg = next((m for m in messages if m["role"] == "user"), None)
+            assistant_msg = next(
+                (m for m in messages if m["role"] == "assistant"), None
+            )
+
+            assert user_msg is not None
+            assert user_msg["content"] == "I ate 300g cholay"
+            assert user_msg["role"] == "user"
+
+            assert assistant_msg is not None
+            assert assistant_msg["content"] == "Logged 300g Cholay!"
+            assert assistant_msg["role"] == "assistant"

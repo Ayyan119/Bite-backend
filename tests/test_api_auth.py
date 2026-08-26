@@ -170,19 +170,32 @@ async def test_generate_dev_token_endpoint():
 
 @pytest.mark.asyncio
 async def test_login_endpoint():
-    """Verify POST /api/v1/auth/login authenticates dummy user with email and password."""
+    """Verify POST /api/v1/auth/login authenticates registered user with email and password."""
+    email = f"alex_{uuid4().hex[:6]}@bite.app"
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://testserver"
     ) as client:
+        # Register first
+        reg_resp = await client.post(
+            "/api/v1/auth/register",
+            json={
+                "email": email,
+                "password": "bite12345",
+                "display_name": "Alex Morgan",
+            },
+        )
+        assert reg_resp.status_code == 201
+
+        # Now login
         response = await client.post(
             "/api/v1/auth/login",
-            json={"email": "alex.morgan@bite.app", "password": "bite12345"},
+            json={"email": email, "password": "bite12345"},
         )
         assert response.status_code == 200
         data = response.json()
         assert "access_token" in data
         assert data["token_type"] == "bearer"
-        assert data["email"] == "alex.morgan@bite.app"
+        assert data["email"] == email
         assert "display_name" in data
         assert isinstance(data["display_name"], str)
         assert isinstance(data["age"], (int, type(None)))
@@ -191,15 +204,54 @@ async def test_login_endpoint():
 
 
 @pytest.mark.asyncio
+async def test_login_non_existent_user_fails():
+    """Verify POST /api/v1/auth/login rejects non-existent users with 404."""
+    random_email = f"nonexistent_{uuid4().hex[:8]}@bite.app"
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://testserver"
+    ) as client:
+        response = await client.post(
+            "/api/v1/auth/login",
+            json={"email": random_email, "password": "anypassword"},
+        )
+        assert response.status_code == 404
+        assert "User account not found" in response.json()["error"]["message"]
+
+
+@pytest.mark.asyncio
+async def test_register_duplicate_user_fails():
+    """Verify POST /api/v1/auth/register rejects duplicate registrations with 400."""
+    user_email = f"existing_{uuid4().hex[:8]}@bite.app"
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://testserver"
+    ) as client:
+        # First registration succeeds
+        reg1 = await client.post(
+            "/api/v1/auth/register",
+            json={"email": user_email, "password": "password123"},
+        )
+        assert reg1.status_code == 201
+
+        # Duplicate registration fails
+        reg2 = await client.post(
+            "/api/v1/auth/register",
+            json={"email": user_email, "password": "differentpassword"},
+        )
+        assert reg2.status_code == 400
+        assert "already exists" in reg2.json()["error"]["message"]
+
+
+@pytest.mark.asyncio
 async def test_register_endpoint():
     """Verify POST /api/v1/auth/register creates user account and returns token."""
+    rand_email = f"new_runner_{uuid4().hex[:6]}@bite.app"
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://testserver"
     ) as client:
         response = await client.post(
             "/api/v1/auth/register",
             json={
-                "email": "new_runner@bite.app",
+                "email": rand_email,
                 "password": "bite12345",
                 "display_name": "New Runner",
                 "age": 30,
@@ -211,7 +263,7 @@ async def test_register_endpoint():
         data = response.json()
         assert "access_token" in data
         assert data["token_type"] == "bearer"
-        assert data["email"] == "new_runner@bite.app"
+        assert data["email"] == rand_email
         assert data["display_name"] == "New Runner"
         assert data["age"] == 30
 

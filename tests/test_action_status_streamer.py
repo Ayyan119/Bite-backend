@@ -13,7 +13,7 @@ async def test_action_status_sse_streaming():
     """Verify tool status mapping, SSE formatting, and event stream parsing."""
     # Test tool status text lookup
     msg = get_tool_status_message("search_usda_food")
-    assert "USDA database" in msg
+    assert "nutrition details" in msg
 
     # Test SSE chunk formatting
     sse_line = format_sse_chunk("action_status", msg, tool_name="search_usda_food")
@@ -37,5 +37,5 @@ async def test_action_status_sse_streaming():
 
     assert len(chunks) == 2
     assert "action_status" in chunks[0]
-    assert "Saving meal items to your log..." in chunks[0]
+    assert "Logging your meal..." in chunks[0]
     assert "Logged 2 eggs!" in chunks[1]

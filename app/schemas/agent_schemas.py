@@ -29,6 +29,9 @@ class ChatStreamChunk(BaseAgentSchema):
         description="Type of SSE payload chunk"
     )
     content: str = Field(description="Payload content or status message")
+    role: Optional[str] = Field(
+        default="assistant", description="Role of message sender, defaults to assistant"
+    )
     tool_name: Optional[str] = Field(
         default=None, description="Associated tool name if action status"
     )

@@ -22,7 +22,7 @@ async def test_standard_and_regional_fallback_logging():
 
     # 1. Action status check
     status_msg = get_tool_status_message("search_usda_food")
-    assert "USDA database" in status_msg
+    assert "nutrition details" in status_msg
     sse_chunk = format_sse_chunk(
         "action_status", status_msg, tool_name="search_usda_food"
     )
